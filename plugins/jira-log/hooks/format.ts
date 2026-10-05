@@ -1,6 +1,6 @@
-import type { JiraIssue, JiraUpdate } from '../types'
+import type { JiraIssue, JiraNewIssue, JiraSuggestion, JiraTransition, JiraUpdate } from '../types'
 
-export type JiraConfig = { site: string; email: string; tokenBlob: string }
+export type JiraConfig = { site: string; email: string; tokenBlob: string; project?: string }
 
 export type DailyComment = { id: string; updated: string; update: JiraUpdate }
 
@@ -8,6 +8,7 @@ export type DayActivity = {
   files: string[]
   commits: string[]
   tests: { command: string; isPassing: boolean }[]
+  // A pull or merge request's URL, or the command or tool that opened it when no URL was printed.
   pullRequests: string[]
 }
 
@@ -18,13 +19,19 @@ export type RawIssue = {
 
 export type RawComment = { id: string; updated: string }
 
+export type RawTransition = { id: string; name: string; to: { name: string } }
+
+export const IN_PROGRESS = 'In Progress'
+
 export const EMPTY_ACTIVITY: DayActivity = { files: [], commits: [], tests: [], pullRequests: [] }
 
 export const TEST_RUN =
   /\b(pytest|vitest|jest|mocha|unittest|go test|cargo test|(?:npm|pnpm|yarn|bun)(?: run)? test)\b/
 export const COMMIT = /\bgit\s+commit\b/
-export const PR_CREATE = /\bgh\s+pr\s+create\b/
-export const PR_URL = /https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/\d+/
+const REVIEW_COMMAND = /\b(gh\s+pr\s+create|glab\s+mr\s+create|az\s+repos\s+pr\s+create)\b/
+const REVIEW_TOOL = /create_?(?:pull_?request|merge_?request)/i
+// GitHub /pull/7, GitLab /merge_requests/7, Azure DevOps /pullrequest/7.
+const REVIEW_URL = /https?:\/\/[^\s"'<>]+\/(?:pull|merge_requests|pullrequest)\/\d+/
 
 // DPAPI: a sealed blob opens only for this Windows user on this machine.
 export const POWERSHELL = ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command']
@@ -36,9 +43,33 @@ export const OPEN =
   '[Runtime.InteropServices.Marshal]::PtrToStringBSTR(' +
   '[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))'
 
-export const ANSWER_SHAPE =
+export const UPDATE_SHAPE =
   'Answer with only this JSON object and nothing else:\n' +
   '{"completed": [], "pending": [], "blockers": [], "achievements": []}'
+
+export const UPDATE_AND_MOVE_SHAPE =
+  'Answer with only this JSON object and nothing else:\n' +
+  '{"completed": [], "pending": [], "blockers": [], "achievements": [], "move": {"to": "", "reason": ""}}'
+
+export const ISSUE_SHAPE =
+  'Answer with only this JSON object and nothing else:\n' +
+  '{"summary": "", "description": ""}\n' +
+  'summary: one imperative line under 100 characters. description: plain text, short paragraphs ' +
+  'separated by a blank line, "- " at the start of each line of a list.'
+
+export function reviewRequestOf(command: string, output: string) {
+  const opened = command.match(REVIEW_COMMAND)?.[1]
+
+  return opened === undefined ? undefined : (output.match(REVIEW_URL)?.[0] ?? opened.replace(/\s+/g, ' '))
+}
+
+export const isReviewTool = (tool: string) => tool.startsWith('mcp__') && REVIEW_TOOL.test(tool)
+
+export const reviewUrlIn = (output: string) => output.match(REVIEW_URL)?.[0]
+
+export const toTransition = ({ id, name, to }: RawTransition): JiraTransition => ({ id, name, to: to.name })
+
+export const isSameStatus = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
 
 const SECTIONS = [
   ['completed', 'Completed'],
@@ -80,10 +111,36 @@ export function relativeTo(root: string, path: string) {
 export const addOnce = (list: string[], item: string, limit: number) =>
   list.includes(item) ? list : [...list, item].slice(-limit)
 
+const objectIn = (reply: string) => JSON.parse(reply.slice(reply.indexOf('{'), reply.lastIndexOf('}') + 1))
+
+export function parseNewIssue(reply: string, issueType: string): JiraNewIssue {
+  const parsed = objectIn(reply) as { summary?: unknown; description?: unknown }
+  const summary = typeof parsed.summary === 'string' ? parsed.summary.trim().slice(0, 255) : ''
+  if (summary === '') throw new Error('the model drafted no summary')
+
+  return {
+    summary,
+    description: typeof parsed.description === 'string' ? parsed.description.trim() : '',
+    issueType,
+  }
+}
+
+// Only a move the workflow allows from here is suggested; anything else the model names is dropped.
+export function parseSuggestion(
+  reply: string,
+  moves: readonly JiraTransition[],
+  status: string,
+): JiraSuggestion | null {
+  const { move } = objectIn(reply) as { move?: { to?: unknown; reason?: unknown } }
+  const to = typeof move?.to === 'string' ? move.to : ''
+  const transition = moves.find(one => isSameStatus(one.to, to))
+  if (to === '' || transition === undefined || isSameStatus(to, status)) return null
+
+  return { id: transition.id, to: transition.to, reason: typeof move?.reason === 'string' ? move.reason.trim() : '' }
+}
+
 export function parseUpdate(reply: string): JiraUpdate {
-  const start = reply.indexOf('{')
-  const end = reply.lastIndexOf('}')
-  const parsed = JSON.parse(reply.slice(start, end + 1)) as Partial<Record<keyof JiraUpdate, unknown>>
+  const parsed = objectIn(reply) as Partial<Record<keyof JiraUpdate, unknown>>
   const listOf = (value: unknown) =>
     Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
@@ -121,4 +178,24 @@ export function toDocument(day: string, update: JiraUpdate) {
     version: 1,
     content: [{ type: 'paragraph', content: [text(`Daily update ${day}`, true)] }, ...sections],
   }
+}
+
+export function toDescription(description: string) {
+  const blocks = description
+    .split(/\n\s*\n/)
+    .map(block => block.split('\n').map(line => line.trim()).filter(Boolean))
+    .filter(lines => lines.length > 0)
+    .map(lines =>
+      lines.every(line => line.startsWith('- '))
+        ? {
+            type: 'bulletList',
+            content: lines.map(line => ({
+              type: 'listItem',
+              content: [{ type: 'paragraph', content: [text(line.slice(2))] }],
+            })),
+          }
+        : { type: 'paragraph', content: [text(lines.join(' '))] },
+    )
+
+  return { type: 'doc', version: 1, content: blocks }
 }
