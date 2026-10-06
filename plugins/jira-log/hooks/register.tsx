@@ -17,6 +17,7 @@ import {
   parseSuggestion,
   parseUpdate,
   POWERSHELL,
+  progressOf,
   reasonOf,
   relativeTo,
   reviewRequestOf,
@@ -47,6 +48,8 @@ const USAGE = 'Usage: /jira [setup | link [KEY] | new [what the ticket is for] |
 const view = atom({ plugin: 'jira-log', key: 'view' } as const, 'setup')
 const isConfigured = atom({ plugin: 'jira-log', key: 'isConfigured' } as const, false)
 const isSkipped = atom({ plugin: 'jira-log', key: 'isSkipped' } as const, false)
+const isProgressHidden = atom({ plugin: 'jira-log', key: 'isProgressHidden' } as const, false)
+const progress = atom({ plugin: 'jira-log', key: 'progress' } as const, null)
 const link = atom({ plugin: 'jira-log', key: 'link' } as const, null)
 const issues = atom({ plugin: 'jira-log', key: 'issues' } as const, [])
 const draft = atom({ plugin: 'jira-log', key: 'draft' } as const, null)
@@ -70,6 +73,8 @@ const typed: Partial<Record<SetupField, string>> = {}
 let opened: { blob: string; token: string } | undefined
 // The store is read-modify-write, and parallel tool calls finish together.
 let recording: Promise<void> = Promise.resolve()
+// Actions recorded when the open draft was made: work done while reviewing it is not in the comment.
+let draftedActions: number | undefined
 
 async function powershell($: Engine, script: string, stdin: string, what: string) {
   const { exitCode, stdout, stderr } = await $.process.run([...POWERSHELL, script], { stdin })
@@ -179,10 +184,28 @@ async function readActivity($: Engine, issue: string, day: string) {
 
 function record($: Engine, issue: string, day: string, change: (activity: DayActivity) => DayActivity) {
   recording = recording
-    .then(async () => $.store.set(activityKey(issue, day), change(await readActivity($, issue, day))))
+    .then(async () => {
+      const activity = await readActivity($, issue, day)
+      await $.store.set(activityKey(issue, day), { ...change(activity), actions: (activity.actions ?? 0) + 1 })
+      if ((await read($, link))?.key === issue) await refreshProgress($, issue)
+    })
     .catch(error => $.ui.log(`jira-log: could not record activity: ${error}`, { to: 'debug' }))
 
   return recording
+}
+
+async function refreshProgress($: Engine, issue: string) {
+  const day = await today($)
+  const { actions = 0 } = await readActivity($, issue, day)
+  const posted = (await $.store.get(commentKey(issue, day))) as DailyComment | undefined
+  const current = {
+    day,
+    actions,
+    postedActions: posted === undefined ? 0 : (posted.actions ?? actions),
+    postedAt: posted === undefined ? null : (posted.postedAt ?? (Date.parse(posted.updated) || null)),
+  }
+  await update($, progress, () => current)
+  $.ui.status(`Jira ${issue}${progressOf(current, day).short ? ` · ${progressOf(current, day).short}` : ''}`)
 }
 
 async function recordCommand($: Engine, issue: string, command: string, isPassing: boolean, output: string) {
@@ -248,8 +271,11 @@ const commentKey = (issue: string, day: string) => `comment:${issue}:${day}`
 
 const today = async ($: Engine) => dayOf(await $.clock.now())
 
-const showStatus = ($: Engine, issue: JiraIssue | null) =>
-  $.ui.status(issue === null ? undefined : `Jira ${issue.key}`)
+async function showStatus($: Engine, issue: JiraIssue | null) {
+  if (issue !== null) return refreshProgress($, issue.key)
+  await update($, progress, () => null)
+  $.ui.status(undefined)
+}
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -278,7 +304,7 @@ async function refresh($: Engine) {
   await update($, isConfigured, () => isComplete(config))
   const linked = (await loadLinks($))[await $.session.root()] ?? null
   await update($, link, () => linked)
-  showStatus($, linked)
+  await showStatus($, linked)
 }
 
 async function setLink($: Engine, issue: JiraIssue | null) {
@@ -286,7 +312,7 @@ async function setLink($: Engine, issue: JiraIssue | null) {
   const { [root]: _, ...others } = await loadLinks($)
   await $.store.set('links', issue === null ? others : { ...others, [root]: issue })
   await update($, link, () => issue)
-  showStatus($, issue)
+  await showStatus($, issue)
 }
 
 async function openPicker($: Engine) {
@@ -438,6 +464,7 @@ async function startDraft($: Engine) {
   await update($, suggestion, () => null)
   await openPane($, 'draft')
   await attempt($, `Drafting today's update for ${issue.key}...`, async () => {
+    draftedActions = (await readActivity($, issue.key, await today($))).actions
     const current = await getIssue($, config, issue.key)
     const moves = await transitionsOf($, config, issue.key).catch(() => [])
     const reply = await ask($, await draftPrompt($, current, await today($), moves))
@@ -468,7 +495,9 @@ async function post($: Engine) {
     const key = commentKey(issue.key, day)
     const previous = (await $.store.get(key)) as DailyComment | undefined
     const saved = await saveDailyComment($, await requireConfig($), issue.key, day, current, previous)
-    await $.store.set(key, saved)
+    const actions = draftedActions ?? (await readActivity($, issue.key, day)).actions
+    await $.store.set(key, { ...saved, actions, postedAt: await $.clock.now() })
+    await refreshProgress($, issue.key)
     await update($, draft, () => null)
     $.ui.toast(`${saved.id === previous?.id ? 'Updated' : 'Posted'} today's comment on ${issue.key}`)
     if ((await read($, suggestion)) === null) await $.ui.close({ id: PANE })
@@ -641,9 +670,31 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const isHidden = e.props.hasSurvey || (await read($, link)) !== null || (await read($, isSkipped))
-    if (isHidden) return next(e)
+    if (e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
+    const linked = await read($, link)
+    if (linked !== null) {
+      if (await read($, isProgressHidden)) return next(e)
+      const { tone, text } = progressOf(await read($, progress), await today($))
+
+      return (
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor={tone === 'quiet'} color={tone === 'due' ? 'yellow' : tone === 'done' ? 'green' : undefined}>
+            {linked.key} · {linked.status} · {text}
+          </Text>
+          {tone === 'due' && (
+            <Button
+              key="draft-update"
+              label={text.startsWith('posted') ? 'Update' : 'Draft update'}
+              variant="primary"
+              onPress={() => void startDraft($).catch(fail($))}
+            />
+          )}
+          <Button key="hide-progress" label="Hide" onPress={() => void update($, isProgressHidden, () => true)} />
+        </Box>
+      )
+    }
+    if (await read($, isSkipped)) return next(e)
     const isReady = await read($, isConfigured)
 
     return (

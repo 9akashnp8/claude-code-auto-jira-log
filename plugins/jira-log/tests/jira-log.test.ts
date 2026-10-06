@@ -6,6 +6,7 @@ import {
   newIssuePrompt,
   parseSuggestion,
   parseUpdate,
+  progressOf,
   relativeTo,
   reviewRequestOf,
   toDocument,
@@ -25,6 +26,7 @@ function fakeJira(on: On, entries: Record<string, unknown> = {}) {
   const created: { fields: Record<string, unknown> }[] = []
   let status = { name: 'To Do', statusCategory: { key: 'new' } }
   mock.store(on, { config: CONFIG, ...entries })
+  const clock = mock.clock(on, { now: new Date(2026, 9, 6, 9, 30).getTime() })
   on('process.run', () => ({ value: { exitCode: 0, stdout: 'token\n', stderr: '' } }))
   on('session.root', () => ({ value: 'C:\\code\\repo' }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -53,6 +55,7 @@ function fakeJira(on: On, entries: Record<string, unknown> = {}) {
     }
     if (path === '/rest/api/3/myself') return json({ accountId: 'me-1', displayName: 'Me' })
     if (path.endsWith('/assignee')) return empty
+    if (path.endsWith('/comment') && method === 'POST') return json({ id: '100', updated: '2026-10-06T09:30:00.000+0000' })
     if (path === '/rest/api/3/issue' && method === 'POST') {
       created.push(JSON.parse(e.init?.body ?? '{}'))
       return json({ key: 'CPC-2' })
@@ -61,7 +64,7 @@ function fakeJira(on: On, entries: Record<string, unknown> = {}) {
     return json({ key, fields: { summary: 'Build the thing', status } })
   })
 
-  return { sent, toasts, created }
+  return { sent, toasts, created, clock }
 }
 
 const BAND = {
@@ -130,8 +133,7 @@ test('linking a To Do issue moves it to In Progress', async ($, on) => {
 
 test('a pull request is a clue for the update, and the issue moves only when the person confirms', async ($, on) => {
   const linked = { key: 'CPC-1', summary: 'Build the thing', status: 'In Progress', statusCategory: 'indeterminate' }
-  const { sent, toasts } = fakeJira(on, { links: { 'C:\\code\\repo': linked } })
-  const clock = mock.clock(on)
+  const { sent, toasts, clock } = fakeJira(on, { links: { 'C:\\code\\repo': linked } })
   const prompts: string[] = []
   const url = 'https://devops.example.com/tfs/Apps/_git/repo/pullrequest/42'
   on('tool.call', { tool: 'Bash' }, () => ({
@@ -171,6 +173,57 @@ test('a pull request is a clue for the update, and the issue moves only when the
 
   expect(sent.filter(line => line.startsWith('POST'))).toEqual(['POST /rest/api/3/issue/CPC-1/transitions'])
   expect(toasts).toContain('Moved CPC-1 to In Review')
+})
+
+test('the band shows whether today’s work on the linked issue is in Jira', async ($, on) => {
+  const linked = { key: 'CPC-1', summary: 'Build the thing', status: 'In Progress', statusCategory: 'indeterminate' }
+  const { clock } = fakeJira(on, { links: { 'C:\\code\\repo': linked } })
+  on('tool.call', { tool: 'Edit' }, () => ({ result: { filePath: 'C:\\code\\repo\\src\\a.ts' }, text: 'edited' }))
+  on('model.fork', () => ({
+    value: {
+      isAnswered: true,
+      text: '{"completed": ["Built the thing"], "pending": [], "blockers": [], "achievements": [], "move": {"to": ""}}',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    },
+  }))
+  await $.session.start({ cwd: 'C:\\code\\repo', surface: 'terminal', isInteractive: true })
+  const edit = async () => {
+    await $.tool.call({ tool: 'Edit', file_path: 'C:\\code\\repo\\src\\a.ts', old_string: 'a', new_string: 'b' })
+    await clock.settle()
+  }
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const line = async () => (await band.find({ type: 'Text', text: /CPC-1/ }))?.text
+
+  expect(await line()).toBe('CPC-1 · In Progress · nothing recorded today')
+  expect(await band.find({ key: 'draft-update' })).toBeUndefined()
+
+  await edit()
+  expect(await line()).toBe('CPC-1 · In Progress · 1 action today, not in Jira yet')
+  expect((await band.find({ key: 'draft-update' }))?.props.label).toBe('Draft update')
+
+  await band.press({ key: 'draft-update' })
+  const pane = await $.ui.mount({
+    plugin: 'jira-log',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'jira',
+    props: { title: 'Jira', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 } },
+  })
+  await pane.press({ key: 'post' })
+  await pane.unmount()
+  expect(await line()).toBe("CPC-1 · In Progress · ✓ today's update posted 09:30")
+
+  await edit()
+  expect(await line()).toBe('CPC-1 · In Progress · posted 09:30, 1 action since')
+  expect((await band.find({ key: 'draft-update' }))?.props.label).toBe('Update')
+  await band.unmount()
+})
+
+test('yesterday’s progress does not count as today’s', async () => {
+  const yesterday = { day: '2026-10-05', actions: 4, postedActions: 4, postedAt: 1 }
+
+  expect(progressOf(yesterday, '2026-10-06').text).toBe('nothing recorded today')
+  expect(progressOf(null, '2026-10-06').short).toBe('')
 })
 
 test('pull and merge requests are recognised whatever opened them', async () => {

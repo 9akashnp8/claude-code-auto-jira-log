@@ -20,6 +20,8 @@ export type JiraTransition = { id: string; name: string; to: string }
 
 export type JiraSuggestion = { id: string; to: string; reason: string }
 
+export type JiraProgress = { day: string; actions: number; postedActions: number; postedAt: number | null }
+
 export type JiraView = 'setup' | 'pick' | 'draft' | 'create' | 'move'
 
 declare module 'claude-code' {
@@ -28,6 +30,8 @@ declare module 'claude-code' {
       view: JiraView
       isConfigured: boolean
       isSkipped: boolean
+      isProgressHidden: boolean
+      progress: JiraProgress | null
       link: JiraIssue | null
       issues: JiraIssue[]
       draft: JiraUpdate | null

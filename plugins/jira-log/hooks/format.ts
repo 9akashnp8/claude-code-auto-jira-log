@@ -1,8 +1,9 @@
-import type { JiraIssue, JiraNewIssue, JiraSuggestion, JiraTransition, JiraUpdate } from '../types'
+import type { JiraIssue, JiraNewIssue, JiraProgress, JiraSuggestion, JiraTransition, JiraUpdate } from '../types'
 
 export type JiraConfig = { site: string; email: string; tokenBlob: string; project?: string }
 
-export type DailyComment = { id: string; updated: string; update: JiraUpdate }
+// Older comments carry no `actions` or `postedAt`.
+export type DailyComment = { id: string; updated: string; update: JiraUpdate; actions?: number; postedAt?: number }
 
 export type DayActivity = {
   files: string[]
@@ -10,6 +11,8 @@ export type DayActivity = {
   tests: { command: string; isPassing: boolean }[]
   // A pull or merge request's URL, or the command or tool that opened it when no URL was printed.
   pullRequests: string[]
+  // Every action recorded today, counted even when the lists above dedupe or roll it off; absent on older days.
+  actions?: number
 }
 
 export type RawIssue = {
@@ -23,7 +26,36 @@ export type RawTransition = { id: string; name: string; to: { name: string } }
 
 export const IN_PROGRESS = 'In Progress'
 
-export const EMPTY_ACTIVITY: DayActivity = { files: [], commits: [], tests: [], pullRequests: [] }
+export const EMPTY_ACTIVITY: DayActivity = { files: [], commits: [], tests: [], pullRequests: [], actions: 0 }
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
+
+const clockOf = (at: number) => {
+  const date = new Date(at)
+
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+// What the band and status line say about today's work on the linked issue.
+export function progressOf(progress: JiraProgress | null, day: string) {
+  const current = progress?.day === day ? progress : null
+  const actions = current?.actions ?? 0
+  const unposted = Math.max(0, actions - (current?.postedActions ?? 0))
+  if (current?.postedAt == null) {
+    return actions === 0
+      ? { tone: 'quiet', text: 'nothing recorded today', short: '' }
+      : { tone: 'due', text: `${plural(actions, 'action')} today, not in Jira yet`, short: `${actions} unposted` }
+  }
+  if (unposted === 0) {
+    return { tone: 'done', text: `✓ today's update posted ${clockOf(current.postedAt)}`, short: '✓' }
+  }
+
+  return {
+    tone: 'due',
+    text: `posted ${clockOf(current.postedAt)}, ${plural(unposted, 'action')} since`,
+    short: `${unposted} unposted`,
+  }
+}
 
 export const TEST_RUN =
   /\b(pytest|vitest|jest|mocha|unittest|go test|cargo test|(?:npm|pnpm|yarn|bun)(?: run)? test)\b/
