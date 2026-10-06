@@ -7,7 +7,14 @@ export type JiraUpdate = {
   achievements: string[]
 }
 
-export type JiraNewIssue = { summary: string; description: string; issueType: string }
+export type JiraNewIssue = {
+  summary: string
+  goal: string
+  scope: string[]
+  acceptance: string[]
+  notes: string[]
+  issueType: string
+}
 
 export type JiraTransition = { id: string; name: string; to: string }
 

@@ -53,9 +53,31 @@ export const UPDATE_AND_MOVE_SHAPE =
 
 export const ISSUE_SHAPE =
   'Answer with only this JSON object and nothing else:\n' +
-  '{"summary": "", "description": ""}\n' +
-  'summary: one imperative line under 100 characters. description: plain text, short paragraphs ' +
-  'separated by a blank line, "- " at the start of each line of a list.'
+  '{"summary": "", "goal": "", "scope": [], "acceptance": [], "notes": []}'
+
+export function newIssuePrompt(focus: string) {
+  const subject = focus
+    ? `The person asked for: "${focus}". That decides what the ticket is about. Use this conversation ` +
+      'only for details that serve it, and leave out everything else the conversation covered.'
+    : 'Base it on the main piece of work in this conversation.'
+
+  return [
+    'Draft a Jira ticket: a description of work to be done, not a record of what this conversation did.',
+    subject,
+    [
+      'Rules:',
+      '- Write it as work ahead, for a teammate who has not seen the conversation. Never narrate what was ' +
+        'discussed, tried or found, or what exists so far; at most one clause of background, inside the goal.',
+      '- summary: an imperative title under 80 characters.',
+      '- goal: one or two sentences: the outcome wanted and why.',
+      '- scope: 2 to 6 deliverables, each one short line starting with a verb.',
+      '- acceptance: 2 to 5 checkable outcomes that say when the ticket is done.',
+      '- notes: only open questions or constraints someone must know before starting; usually empty.',
+      '- Under 150 words in all. No code, file paths, diffs, secrets or internal hostnames.',
+    ].join('\n'),
+    ISSUE_SHAPE,
+  ].join('\n\n')
+}
 
 export function reviewRequestOf(command: string, output: string) {
   const opened = command.match(REVIEW_COMMAND)?.[1]
@@ -113,14 +135,22 @@ export const addOnce = (list: string[], item: string, limit: number) =>
 
 const objectIn = (reply: string) => JSON.parse(reply.slice(reply.indexOf('{'), reply.lastIndexOf('}') + 1))
 
+const listOf = (value: unknown) =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map(item => item.trim())
+    : []
+
 export function parseNewIssue(reply: string, issueType: string): JiraNewIssue {
-  const parsed = objectIn(reply) as { summary?: unknown; description?: unknown }
+  const parsed = objectIn(reply) as Partial<Record<keyof JiraNewIssue, unknown>>
   const summary = typeof parsed.summary === 'string' ? parsed.summary.trim().slice(0, 255) : ''
   if (summary === '') throw new Error('the model drafted no summary')
 
   return {
     summary,
-    description: typeof parsed.description === 'string' ? parsed.description.trim() : '',
+    goal: typeof parsed.goal === 'string' ? parsed.goal.trim() : '',
+    scope: listOf(parsed.scope),
+    acceptance: listOf(parsed.acceptance),
+    notes: listOf(parsed.notes),
     issueType,
   }
 }
@@ -141,8 +171,6 @@ export function parseSuggestion(
 
 export function parseUpdate(reply: string): JiraUpdate {
   const parsed = objectIn(reply) as Partial<Record<keyof JiraUpdate, unknown>>
-  const listOf = (value: unknown) =>
-    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 
   return {
     completed: listOf(parsed.completed),
@@ -157,21 +185,38 @@ export const toMarkdown = (update: JiraUpdate) =>
     .map(([field, title]) => `#### ${title}\n${update[field].map(item => `- ${item}`).join('\n')}`)
     .join('\n\n') || '_Nothing to report._'
 
+const ISSUE_SECTIONS = [
+  ['scope', 'Scope'],
+  ['acceptance', 'Acceptance criteria'],
+  ['notes', 'Notes'],
+] as const
+
+export const toIssueMarkdown = (issue: JiraNewIssue) =>
+  [
+    issue.goal,
+    ...ISSUE_SECTIONS.filter(([field]) => issue[field].length > 0).map(
+      ([field, title]) => `#### ${title}\n${issue[field].map(item => `- ${item}`).join('\n')}`,
+    ),
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
 const text = (value: string, isStrong = false) =>
   isStrong ? { type: 'text', text: value, marks: [{ type: 'strong' }] } : { type: 'text', text: value }
 
-// Comment bodies in the v3 API are Atlassian Document Format, not markdown.
+const headedList = (title: string, items: readonly string[]) => [
+  { type: 'heading', attrs: { level: 4 }, content: [text(title)] },
+  {
+    type: 'bulletList',
+    content: items.map(item => ({ type: 'listItem', content: [{ type: 'paragraph', content: [text(item)] }] })),
+  },
+]
+
+// Comment and description bodies in the v3 API are Atlassian Document Format, not markdown.
 export function toDocument(day: string, update: JiraUpdate) {
-  const sections = SECTIONS.filter(([field]) => update[field].length > 0).flatMap(([field, title]) => [
-    { type: 'heading', attrs: { level: 4 }, content: [text(title)] },
-    {
-      type: 'bulletList',
-      content: update[field].map(item => ({
-        type: 'listItem',
-        content: [{ type: 'paragraph', content: [text(item)] }],
-      })),
-    },
-  ])
+  const sections = SECTIONS.filter(([field]) => update[field].length > 0).flatMap(([field, title]) =>
+    headedList(title, update[field]),
+  )
 
   return {
     type: 'doc',
@@ -180,22 +225,11 @@ export function toDocument(day: string, update: JiraUpdate) {
   }
 }
 
-export function toDescription(description: string) {
-  const blocks = description
-    .split(/\n\s*\n/)
-    .map(block => block.split('\n').map(line => line.trim()).filter(Boolean))
-    .filter(lines => lines.length > 0)
-    .map(lines =>
-      lines.every(line => line.startsWith('- '))
-        ? {
-            type: 'bulletList',
-            content: lines.map(line => ({
-              type: 'listItem',
-              content: [{ type: 'paragraph', content: [text(line.slice(2))] }],
-            })),
-          }
-        : { type: 'paragraph', content: [text(lines.join(' '))] },
-    )
+export function toIssueDocument(issue: JiraNewIssue) {
+  const sections = ISSUE_SECTIONS.filter(([field]) => issue[field].length > 0).flatMap(([field, title]) =>
+    headedList(title, issue[field]),
+  )
+  const goal = issue.goal === '' ? [] : [{ type: 'paragraph', content: [text(issue.goal)] }]
 
-  return { type: 'doc', version: 1, content: blocks }
+  return { type: 'doc', version: 1, content: [...goal, ...sections] }
 }

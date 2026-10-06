@@ -30,7 +30,7 @@ The token is encrypted with Windows DPAPI before it is stored, so it opens only 
 | `/jira` | Shows which issue this worktree is linked to |
 | `/jira setup` | Opens the connection form |
 | `/jira link [KEY]` | Links this worktree to an issue; without a key, opens the picker |
-| `/jira new` | Drafts a new issue from the conversation: pick its type, revise it, then create and link it |
+| `/jira new [what for]` | Drafts a ticket (goal, scope, acceptance criteria) from the conversation, focused on what you type after `new` if anything: pick its type, revise it, then create and link it |
 | `/jira update` | Drafts today's comment in the Jira pane: revise it, post it or discard it |
 | `/jira status` | Moves the linked issue to any status its workflow allows, such as Done |
 | `/jira unlink` | Removes the link |

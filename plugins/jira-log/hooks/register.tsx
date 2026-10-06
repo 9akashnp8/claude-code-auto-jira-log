@@ -11,6 +11,7 @@ import {
   isReviewTool,
   isSameStatus,
   ISSUE_SHAPE,
+  newIssuePrompt,
   OPEN,
   parseNewIssue,
   parseSuggestion,
@@ -22,9 +23,10 @@ import {
   reviewUrlIn,
   SEAL,
   TEST_RUN,
-  toDescription,
   toDocument,
   toIssue,
+  toIssueDocument,
+  toIssueMarkdown,
   toMarkdown,
   toTransition,
   UPDATE_AND_MOVE_SHAPE,
@@ -40,7 +42,7 @@ import {
 type Engine = EngineInterface
 
 const PANE = 'jira'
-const USAGE = 'Usage: /jira [setup | link [KEY] | new | update | status | unlink]'
+const USAGE = 'Usage: /jira [setup | link [KEY] | new [what the ticket is for] | update | status | unlink]'
 
 const view = atom({ plugin: 'jira-log', key: 'view' } as const, 'setup')
 const isConfigured = atom({ plugin: 'jira-log', key: 'isConfigured' } as const, false)
@@ -496,12 +498,7 @@ async function discard($: Engine) {
   await $.ui.close({ id: PANE })
 }
 
-const NEW_ISSUE_PROMPT =
-  'Draft a Jira issue for the work in this conversation: what is being built or fixed, why, and ' +
-  'what done looks like where the conversation says. Write for a teammate who has not seen the ' +
-  'conversation. No code, diffs, file contents, secrets or internal hostnames.'
-
-async function startCreate($: Engine) {
+async function startCreate($: Engine, focus = '') {
   const { config, project } = await requireProject($)
   await update($, newIssue, () => null)
   await openPane($, 'create')
@@ -509,7 +506,7 @@ async function startCreate($: Engine) {
     const types = await creatableTypes($, config, project)
     await update($, issueTypes, () => types)
     const fallback = types.find(type => isSameStatus(type, 'Task')) ?? types[0] ?? 'Task'
-    const drafted = parseNewIssue(await ask($, `${NEW_ISSUE_PROMPT}\n\n${ISSUE_SHAPE}`), fallback)
+    const drafted = parseNewIssue(await ask($, newIssuePrompt(focus.trim())), fallback)
     await update($, newIssue, () => drafted)
   })
 
@@ -520,10 +517,12 @@ async function reviseIssue($: Engine, instruction: string) {
   const current = await read($, newIssue)
   if (current === null || instruction.trim() === '') return
   await attempt($, 'Revising...', async () => {
-    const { summary, description } = current
+    const { issueType: _, ...fields } = current
     const prompt =
-      `This is the current draft of a new Jira issue:\n${JSON.stringify({ summary, description })}\n\n` +
-      `Revise it as follows: ${instruction.trim()}\n\n${ISSUE_SHAPE}`
+      `This is the current draft of a new Jira ticket:\n${JSON.stringify(fields)}\n\n` +
+      `Revise it as follows: ${instruction.trim()}\n\n` +
+      'Keep it a description of work to be done, under 150 words.\n\n' +
+      ISSUE_SHAPE
     const revised = parseNewIssue(await ask($, prompt), current.issueType)
     await update($, newIssue, () => revised)
   })
@@ -539,7 +538,7 @@ async function createIssue($: Engine) {
         project: { key: project },
         summary: current.summary,
         issuetype: { name: current.issueType },
-        description: toDescription(current.description),
+        description: toIssueDocument(current),
       },
     })
     const { accountId } = await whoAmI($, config)
@@ -557,7 +556,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'jira',
       description: "Link this worktree to a Jira issue and post today's update",
-      argumentHint: '[setup | link [KEY] | new | update | status | unlink]',
+      argumentHint: '[setup | link [KEY] | new [what for] | update | status | unlink]',
     })
     await refresh($)
 
@@ -581,7 +580,7 @@ export const register: Register = on => {
         case 'update':
           return { text: await startDraft($) }
         case 'new':
-          return { text: await startCreate($) }
+          return { text: await startCreate($, e.args.trim().slice(verb.length)) }
         case 'status':
           return { text: await openMoves($) }
         case '': {
@@ -770,7 +769,7 @@ export const register: Register = on => {
         <Box flexDirection="column" gap={1}>
           <Text bold>New issue</Text>
           {drafted !== null && <Text bold>{drafted.summary}</Text>}
-          {drafted !== null && drafted.description !== '' && <Markdown text={drafted.description} />}
+          {drafted !== null && <Markdown text={toIssueMarkdown(drafted)} />}
           {drafted !== null && working === null && (
             <Box flexDirection="column" gap={1}>
               {types.length > 0 && (

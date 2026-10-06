@@ -3,12 +3,13 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import {
   isReviewTool,
+  newIssuePrompt,
   parseSuggestion,
   parseUpdate,
   relativeTo,
   reviewRequestOf,
-  toDescription,
   toDocument,
+  toIssueDocument,
 } from '../hooks/format'
 
 const CONFIG = { site: 'https://team.atlassian.net', email: 'me@example.com', tokenBlob: 'sealed' }
@@ -196,15 +197,20 @@ test('a suggested move must be one the workflow allows from here', async () => {
 
 test('a drafted issue is created, assigned, linked and started', async ($, on) => {
   const { sent, toasts, created } = fakeJira(on, { config: { ...CONFIG, project: 'CPC' } })
-  on('model.fork', () => ({
-    value: {
-      isAnswered: true,
-      text: '{"summary": "Add CSV export", "description": "Export the report.\\n\\n- CSV first"}',
-      usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
-    },
-  }))
+  const prompts: string[] = []
+  on('model.fork', ($, e) => {
+    prompts.push(e.prompt)
+    return {
+      value: {
+        isAnswered: true,
+        text: '{"summary": "Add CSV export", "goal": "Let people export the report.", "scope": ["Write the CSV export"], ' +
+          '"acceptance": ["The report downloads as CSV", " "], "notes": []}',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+    }
+  })
 
-  await $.command.run({ command: 'jira', args: 'new' })
+  await $.command.run({ command: 'jira', args: 'new  a ticket for the CSV export' })
   const pane = await $.ui.mount({
     plugin: 'jira-log',
     surface: 'terminal',
@@ -216,32 +222,47 @@ test('a drafted issue is created, assigned, linked and started', async ($, on) =
   await pane.press({ key: 'create' })
   await pane.unmount()
 
+  expect(prompts[0]).toContain('The person asked for: "a ticket for the CSV export".')
   expect(created[0]?.fields).toEqual({
     project: { key: 'CPC' },
     summary: 'Add CSV export',
     issuetype: { name: 'Task' },
-    description: {
-      type: 'doc',
-      version: 1,
-      content: [
-        { type: 'paragraph', content: [{ type: 'text', text: 'Export the report.' }] },
-        {
-          type: 'bulletList',
-          content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'CSV first' }] }] }],
-        },
-      ],
-    },
+    description: toIssueDocument({
+      summary: 'Add CSV export',
+      goal: 'Let people export the report.',
+      scope: ['Write the CSV export'],
+      acceptance: ['The report downloads as CSV'],
+      notes: [],
+      issueType: 'Task',
+    }),
   })
   expect(sent).toContain('PUT /rest/api/3/issue/CPC-2/assignee')
   expect(sent).toContain('POST /rest/api/3/issue/CPC-2/transitions')
   expect(toasts).toContain('Linked this worktree to CPC-2')
 })
 
-test('a description becomes paragraphs and bullet lists', async () => {
-  const document = toDescription('Add the export.\n\n- CSV first\n- then XLSX\n\nDone when\nboth download.')
+test('without a focus the ticket covers the main work of the conversation', async () => {
+  expect(newIssuePrompt('')).toContain('Base it on the main piece of work in this conversation.')
+  expect(newIssuePrompt('')).not.toContain('The person asked for')
+})
 
-  expect(document.content.map(block => block.type)).toEqual(['paragraph', 'bulletList', 'paragraph'])
-  expect(document.content[2]).toEqual({ type: 'paragraph', content: [{ type: 'text', text: 'Done when both download.' }] })
+test('a ticket is its goal, then a heading and a list per filled section', async () => {
+  const document = toIssueDocument({
+    summary: 'Add CSV export',
+    goal: 'Let people export the report.',
+    scope: ['Write the CSV export', 'Add a download button'],
+    acceptance: ['The report downloads as CSV'],
+    notes: [],
+    issueType: 'Task',
+  })
+
+  expect(document.content.map(block => block.type)).toEqual(['paragraph', 'heading', 'bulletList', 'heading', 'bulletList'])
+  expect(document.content[1]).toEqual({ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: 'Scope' }] })
+  expect(document.content[3]).toEqual({
+    type: 'heading',
+    attrs: { level: 4 },
+    content: [{ type: 'text', text: 'Acceptance criteria' }],
+  })
 })
 
 test('a fenced model reply parses into the four lists', async () => {
