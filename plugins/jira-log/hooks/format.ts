@@ -2,7 +2,8 @@ import type { JiraIssue, JiraNewIssue, JiraProgress, JiraSuggestion, JiraTransit
 
 export type JiraConfig = { site: string; email: string; tokenBlob: string; project?: string }
 
-// Older comments carry no `actions` or `postedAt`.
+// Older comments carry no `actions` or `postedAt`, and their `update` holds completed, pending, blockers
+// and achievements lists in place of `notes`.
 export type DailyComment = { id: string; updated: string; update: JiraUpdate; actions?: number; postedAt?: number }
 
 export type DayActivity = {
@@ -76,26 +77,21 @@ export const OPEN =
   '[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))'
 
 export const UPDATE_RULES = [
-  'Rules: this is a stand-up note a manager reads in thirty seconds, and a weekly report is later built from it.',
-  '- Outcomes, not process: what now exists, works or was decided. Never how the session went, which files ' +
-    'changed, or that something was committed or pushed.',
-  '- One line per item, at most 20 words. No lists of names, terms or files inside an item.',
-  '- completed: at most 4 items; merge related work into one.',
-  '- pending: at most 3 items, the next steps that matter; never housekeeping.',
-  '- blockers: only what stops progress and is outside the person\'s control, each naming who or what it waits on.',
-  '- achievements: at most 2 and usually none: a notable win or catch worth a line in a weekly report, ' +
-    'never a repeat of a completed item.',
+  'Rules: these are plain notes, not sections. A weekly report is built from them later and sorts the work ' +
+    'into its own sections, so never group or label the notes.',
+  '- 2 to 6 notes, in the order the work happened, each one line of at most 25 words.',
+  '- Each note says what was done and what it achieved. When something went wrong, say what and how it was ' +
+    'resolved, or that it is still open and who or what it waits on.',
+  '- Mention a next step only when it was decided today.',
+  '- Never narrate the session, list files, names or terms, or mention housekeeping such as committing or pushing.',
   '- Plain words a teammate outside the project understands. No code, diffs, file paths, secrets or internal ' +
-    'hostnames. Never invent anything; leave a list empty when nothing true belongs in it.',
+    'hostnames. Never invent anything.',
 ].join('\n')
 
-export const UPDATE_SHAPE =
-  'Answer with only this JSON object and nothing else:\n' +
-  '{"completed": [], "pending": [], "blockers": [], "achievements": []}'
+export const UPDATE_SHAPE = 'Answer with only this JSON object and nothing else:\n{"notes": []}'
 
 export const UPDATE_AND_MOVE_SHAPE =
-  'Answer with only this JSON object and nothing else:\n' +
-  '{"completed": [], "pending": [], "blockers": [], "achievements": [], "move": {"to": "", "reason": ""}}'
+  'Answer with only this JSON object and nothing else:\n{"notes": [], "move": {"to": "", "reason": ""}}'
 
 export const ISSUE_SHAPE =
   'Answer with only this JSON object and nothing else:\n' +
@@ -138,13 +134,6 @@ export const reviewUrlIn = (output: string) => output.match(REVIEW_URL)?.[0]
 export const toTransition = ({ id, name, to }: RawTransition): JiraTransition => ({ id, name, to: to.name })
 
 export const isSameStatus = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
-
-const SECTIONS = [
-  ['completed', 'Completed'],
-  ['pending', 'Pending'],
-  ['blockers', 'Blockers'],
-  ['achievements', 'Achievements'],
-] as const
 
 export const toIssue = ({ key, fields }: RawIssue): JiraIssue => ({
   key,
@@ -216,20 +205,11 @@ export function parseSuggestion(
 }
 
 export function parseUpdate(reply: string): JiraUpdate {
-  const parsed = objectIn(reply) as Partial<Record<keyof JiraUpdate, unknown>>
-
-  return {
-    completed: listOf(parsed.completed),
-    pending: listOf(parsed.pending),
-    blockers: listOf(parsed.blockers),
-    achievements: listOf(parsed.achievements),
-  }
+  return { notes: listOf((objectIn(reply) as { notes?: unknown }).notes) }
 }
 
 export const toMarkdown = (update: JiraUpdate) =>
-  SECTIONS.filter(([field]) => update[field].length > 0)
-    .map(([field, title]) => `#### ${title}\n${update[field].map(item => `- ${item}`).join('\n')}`)
-    .join('\n\n') || '_Nothing to report._'
+  update.notes.map(note => `- ${note}`).join('\n') || '_Nothing to report._'
 
 const ISSUE_SECTIONS = [
   ['scope', 'Scope'],
@@ -250,24 +230,24 @@ export const toIssueMarkdown = (issue: JiraNewIssue) =>
 const text = (value: string, isStrong = false) =>
   isStrong ? { type: 'text', text: value, marks: [{ type: 'strong' }] } : { type: 'text', text: value }
 
+const bulletList = (items: readonly string[]) => ({
+  type: 'bulletList',
+  content: items.map(item => ({ type: 'listItem', content: [{ type: 'paragraph', content: [text(item)] }] })),
+})
+
 const headedList = (title: string, items: readonly string[]) => [
   { type: 'heading', attrs: { level: 4 }, content: [text(title)] },
-  {
-    type: 'bulletList',
-    content: items.map(item => ({ type: 'listItem', content: [{ type: 'paragraph', content: [text(item)] }] })),
-  },
+  bulletList(items),
 ]
 
 // Comment and description bodies in the v3 API are Atlassian Document Format, not markdown.
 export function toDocument(day: string, update: JiraUpdate) {
-  const sections = SECTIONS.filter(([field]) => update[field].length > 0).flatMap(([field, title]) =>
-    headedList(title, update[field]),
-  )
+  const notes = update.notes.length > 0 ? [bulletList(update.notes)] : []
 
   return {
     type: 'doc',
     version: 1,
-    content: [{ type: 'paragraph', content: [text(`Daily update ${day}`, true)] }, ...sections],
+    content: [{ type: 'paragraph', content: [text(`Daily update ${day}`, true)] }, ...notes],
   }
 }
 

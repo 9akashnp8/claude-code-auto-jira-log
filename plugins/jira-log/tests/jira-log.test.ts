@@ -146,7 +146,7 @@ test('a pull request is a clue for the update, and the issue moves only when the
     return {
       value: {
         isAnswered: true,
-        text: '{"completed": ["Opened the pull request"], "pending": [], "blockers": [], "achievements": [], ' +
+        text: '{"notes": ["Opened the pull request"], ' +
           '"move": {"to": "in review", "reason": "A pull request was opened."}}',
         usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
       },
@@ -184,7 +184,7 @@ test('the band shows whether today’s work on the linked issue is in Jira', asy
   on('model.fork', () => ({
     value: {
       isAnswered: true,
-      text: '{"completed": ["Built the thing"], "pending": [], "blockers": [], "achievements": [], "move": {"to": ""}}',
+      text: '{"notes": ["Built the thing"], "move": {"to": ""}}',
       usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
     },
   }))
@@ -251,7 +251,7 @@ test('a suggested move must be one the workflow allows from here', async () => {
   expect(parseSuggestion(reply('In Review'), moves, 'In Progress')).toEqual({ id: '31', to: 'In Review', reason: 'PR opened.' })
   expect(parseSuggestion(reply('Done'), moves, 'In Progress')).toBeNull()
   expect(parseSuggestion(reply(''), moves, 'In Progress')).toBeNull()
-  expect(parseSuggestion('{"completed": []}', moves, 'In Progress')).toBeNull()
+  expect(parseSuggestion('{"notes": []}', moves, 'In Progress')).toBeNull()
 })
 
 test('a drafted issue is created, assigned, linked and started', async ($, on) => {
@@ -324,27 +324,17 @@ test('a ticket is its goal, then a heading and a list per filled section', async
   })
 })
 
-test('a fenced model reply parses into the four lists', async () => {
-  const reply = '```json\n{"completed": ["Shipped the parser"], "blockers": "none", "pending": [1, "Docs"]}\n```'
+test('a fenced model reply parses into its notes, dropping anything that is not one', async () => {
+  const reply = '```json\n{"notes": ["Shipped the parser", 1, " ", "Docs wait on review"], "completed": ["x"]}\n```'
 
-  expect(parseUpdate(reply)).toEqual({
-    completed: ['Shipped the parser'],
-    pending: ['Docs'],
-    blockers: [],
-    achievements: [],
-  })
+  expect(parseUpdate(reply)).toEqual({ notes: ['Shipped the parser', 'Docs wait on review'] })
 })
 
-test('the comment body leaves out empty sections', async () => {
-  const document = toDocument('2026-10-05', {
-    completed: ['Shipped the parser'],
-    pending: [],
-    blockers: [],
-    achievements: [],
-  })
+test('the comment is the dated line and the notes as one list, with no section headings', async () => {
+  const document = toDocument('2026-10-05', { notes: ['Shipped the parser', 'Docs wait on review'] })
 
-  expect(document.content.length).toBe(3)
-  expect(document.content[1]).toEqual({ type: 'heading', attrs: { level: 4 }, content: [{ type: 'text', text: 'Completed' }] })
+  expect(document.content.map(block => block.type)).toEqual(['paragraph', 'bulletList'])
+  expect(toDocument('2026-10-05', { notes: [] }).content.length).toBe(1)
 })
 
 test('edited paths are recorded relative to the worktree', async () => {

@@ -1,11 +1,6 @@
 export type JiraIssue = { key: string; summary: string; status: string; statusCategory: string }
 
-export type JiraUpdate = {
-  completed: string[]
-  pending: string[]
-  blockers: string[]
-  achievements: string[]
-}
+export type JiraUpdate = { notes: string[] }
 
 export type JiraNewIssue = {
   summary: string

@@ -901,7 +901,7 @@ export const register: Register = on => {
             <Input
               key="revise"
               label="Revise "
-              placeholder="e.g. add a blocker: waiting on staging access"
+              placeholder="e.g. mention we are waiting on staging access"
               submitLabel="revise"
               onSubmit={value => void revise($, value)}
             />
