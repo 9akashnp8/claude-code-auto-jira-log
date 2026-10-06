@@ -75,6 +75,20 @@ export const OPEN =
   '[Runtime.InteropServices.Marshal]::PtrToStringBSTR(' +
   '[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))'
 
+export const UPDATE_RULES = [
+  'Rules: this is a stand-up note a manager reads in thirty seconds, and a weekly report is later built from it.',
+  '- Outcomes, not process: what now exists, works or was decided. Never how the session went, which files ' +
+    'changed, or that something was committed or pushed.',
+  '- One line per item, at most 20 words. No lists of names, terms or files inside an item.',
+  '- completed: at most 4 items; merge related work into one.',
+  '- pending: at most 3 items, the next steps that matter; never housekeeping.',
+  '- blockers: only what stops progress and is outside the person\'s control, each naming who or what it waits on.',
+  '- achievements: at most 2 and usually none: a notable win or catch worth a line in a weekly report, ' +
+    'never a repeat of a completed item.',
+  '- Plain words a teammate outside the project understands. No code, diffs, file paths, secrets or internal ' +
+    'hostnames. Never invent anything; leave a list empty when nothing true belongs in it.',
+].join('\n')
+
 export const UPDATE_SHAPE =
   'Answer with only this JSON object and nothing else:\n' +
   '{"completed": [], "pending": [], "blockers": [], "achievements": []}'

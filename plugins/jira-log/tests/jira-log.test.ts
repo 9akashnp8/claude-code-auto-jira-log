@@ -11,6 +11,7 @@ import {
   reviewRequestOf,
   toDocument,
   toIssueDocument,
+  UPDATE_RULES,
 } from '../hooks/format'
 
 const CONFIG = { site: 'https://team.atlassian.net', email: 'me@example.com', tokenBlob: 'sealed' }
@@ -165,6 +166,7 @@ test('a pull request is a clue for the update, and the issue moves only when the
   })
 
   expect(prompts[0]).toContain(url)
+  expect(prompts[0]).toContain(UPDATE_RULES)
   expect(sent.some(line => line.startsWith('POST'))).toBe(false)
   expect((await pane.find({ key: 'accept-move' }))?.props.label).toBe('Move to In Review')
 
@@ -192,13 +194,16 @@ test('the band shows whether today’s work on the linked issue is in Jira', asy
     await clock.settle()
   }
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  const line = async () => (await band.find({ type: 'Text', text: /CPC-1/ }))?.text
+  const progressText = () => band.find({ type: 'Text', text: /today|posted/ })
+  const line = async () => (await progressText())?.text
 
-  expect(await line()).toBe('CPC-1 · In Progress · nothing recorded today')
+  expect((await band.find({ type: 'Text', text: /CPC-1/ }))?.text).toBe('CPC-1 · In Progress ·')
+  expect(await line()).toBe('nothing recorded today')
   expect(await band.find({ key: 'draft-update' })).toBeUndefined()
 
   await edit()
-  expect(await line()).toBe('CPC-1 · In Progress · 1 action today, not in Jira yet')
+  expect(await line()).toBe('1 action today, not in Jira yet')
+  expect((await progressText())?.props.color).toBe('warning')
   expect((await band.find({ key: 'draft-update' }))?.props.label).toBe('Draft update')
 
   await band.press({ key: 'draft-update' })
@@ -211,10 +216,11 @@ test('the band shows whether today’s work on the linked issue is in Jira', asy
   })
   await pane.press({ key: 'post' })
   await pane.unmount()
-  expect(await line()).toBe("CPC-1 · In Progress · ✓ today's update posted 09:30")
+  expect(await line()).toBe("✓ today's update posted 09:30")
+  expect((await progressText())?.props.color).toBe('success')
 
   await edit()
-  expect(await line()).toBe('CPC-1 · In Progress · posted 09:30, 1 action since')
+  expect(await line()).toBe('posted 09:30, 1 action since')
   expect((await band.find({ key: 'draft-update' }))?.props.label).toBe('Update')
   await band.unmount()
 })

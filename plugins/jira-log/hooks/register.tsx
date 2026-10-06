@@ -31,6 +31,7 @@ import {
   toMarkdown,
   toTransition,
   UPDATE_AND_MOVE_SHAPE,
+  UPDATE_RULES,
   UPDATE_SHAPE,
   type DailyComment,
   type DayActivity,
@@ -443,9 +444,8 @@ async function draftPrompt($: Engine, issue: JiraIssue, day: string, moves: read
     `Draft today's progress comment for Jira issue ${issue.key} "${issue.summary}" (${day}).`,
     `Work recorded on this issue today across every Claude Code session:\n${JSON.stringify(activity, null, 2)}`,
     earlier,
-    'Use that record and this conversation. Write outcomes a teammate would understand, one short ' +
-      'sentence per item. No code, diffs, file contents, secrets or internal hostnames. Leave a list ' +
-      'empty when nothing true belongs in it; never invent blockers or achievements.',
+    'Use that record and this conversation.',
+    UPDATE_RULES,
     `The issue is in "${issue.status}". Its workflow can move it to: ${statuses || 'nothing from here'}. ` +
       'Suggest a move only when this conversation or the record shows the work has reached one of those ' +
       'statuses: a pull or merge request opened (the record lists it, or the person says they raised one) ' +
@@ -481,7 +481,7 @@ async function revise($: Engine, instruction: string) {
   await attempt($, 'Revising...', async () => {
     const prompt =
       `This is the current draft of today's Jira comment:\n${JSON.stringify(current)}\n\n` +
-      `Revise it as follows: ${instruction.trim()}\n\n${UPDATE_SHAPE}`
+      `Revise it as follows: ${instruction.trim()}\n\n${UPDATE_RULES}\n\n${UPDATE_SHAPE}`
     const revised = parseUpdate(await ask($, prompt))
     await update($, draft, () => revised)
   })
@@ -679,8 +679,11 @@ export const register: Register = on => {
 
       return (
         <Box flexDirection="row" gap={1}>
-          <Text dimColor={tone === 'quiet'} color={tone === 'due' ? 'yellow' : tone === 'done' ? 'green' : undefined}>
-            {linked.key} · {linked.status} · {text}
+          <Text dimColor>
+            {linked.key} · {linked.status} ·
+          </Text>
+          <Text dimColor={tone === 'quiet'} color={tone === 'due' ? 'warning' : tone === 'done' ? 'success' : undefined}>
+            {text}
           </Text>
           {tone === 'due' && (
             <Button
