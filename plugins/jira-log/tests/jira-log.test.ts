@@ -34,9 +34,11 @@ function fakeJira(on: On, entries: Record<string, unknown> = {}) {
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
-    return {}
+    return { value: undefined }
   })
   on('ui.status', () => ({ value: undefined }))
+  // What the plugins beneath draw in the band, such as git-push's line.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ key: 'beneath' }))
   on('ui.open', () => ({ value: { isPlaced: true as const } }))
   on('ui.close', () => ({ value: undefined }))
   on('http.fetch', ($, e) => {
@@ -99,7 +101,7 @@ test('the band offers setup until the worktree is linked or skipped', async ($, 
 
 test('the setup button saves what was typed without Enter', async ($, on) => {
   mock.store(on)
-  on('ui.toast', () => ({}))
+  on('ui.toast', () => ({ value: undefined }))
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({
       plugin: 'jira-log',
@@ -198,6 +200,7 @@ test('the band shows whether today’s work on the linked issue is in Jira', asy
   const line = async () => (await progressText())?.text
 
   expect((await band.find({ type: 'Text', text: /CPC-1/ }))?.text).toBe('CPC-1 · In Progress ·')
+  expect(await band.find({ key: 'beneath' })).toBeDefined()
   expect(await line()).toBe('nothing recorded today')
   expect(await band.find({ key: 'draft-update' })).toBeUndefined()
 

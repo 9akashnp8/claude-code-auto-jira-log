@@ -1,6 +1,6 @@
 # claude-code-auto-jira-log
 
-A Claude Code plugin that keeps Jira Cloud up to date with the work you do in Claude Code.
+A Claude Code plugin that keeps Jira Cloud up to date with the work you do in Claude Code, and a second one, [git-push](#git-push), that pushes your commits from a button.
 
 - **Link** a worktree to a Jira issue: pick one of your open issues, type a key, or create a new issue drafted from the conversation.
 - **Record** the day's work on that issue as you go: files edited, commits, test runs, pull requests.
@@ -42,6 +42,23 @@ Linking a To Do issue looks for a transition into a status named In Progress (an
 
 `/jira update` only suggests moves the issue's workflow allows from its current status, and nothing moves until you press the button. Its evidence is the conversation and the day's record, which notes pull and merge requests opened from Claude Code by `gh pr create`, `glab mr create`, `az repos pr create`, or an MCP tool such as `create_pull_request`. A pull request opened in the browser counts once you mention it in the conversation.
 
+## git-push
+
+A second plugin in this marketplace. When the branch has commits that are not on `origin`, a line above the prompt says so, with a **Push** button:
+
+- `feature/export · not on origin yet · 2 commits`: the branch was never pushed. **Push** runs `git push --set-upstream origin HEAD`, so `origin/feature/export` is created and tracked.
+- `feature/export · 1 commit not pushed`: the branch tracks `origin/feature/export` and is ahead of it.
+
+A toast says whether the push worked, or the line from git that says why not (a rejected push, a failed sign-in). The line is hidden while there is nothing to push. It checks git after each turn and every 5 seconds, so commits made with the app's Commit button or in a terminal show up too.
+
+```
+/plugin install git-push@auto-jira-log
+```
+
+The push runs with your own git credentials (Git Credential Manager on Windows) and never waits on a terminal prompt. Claude Code runs git for plugins with the repository's hooks off, so a `pre-push` hook does not run on this push.
+
+When both plugins are installed, their lines stack in the band above the prompt.
+
 ## Develop
 
 ```
@@ -49,3 +66,5 @@ claude plugin validate plugins/jira-log
 claude plugin test plugins/jira-log
 claude --plugin-dir plugins/jira-log
 ```
+
+The same commands work for `plugins/git-push`.
