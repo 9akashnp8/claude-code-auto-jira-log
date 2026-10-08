@@ -5,7 +5,7 @@ A Claude Code plugin that keeps Jira Cloud up to date with the work you do in Cl
 - **Link** a worktree to a Jira issue: pick one of your open issues, type a key, or create a new issue drafted from the conversation.
 - **Record** the day's work on that issue as you go: files edited, commits, test runs, pull requests, and Artifacts published.
 - **Post** one daily comment per issue: a few plain notes on what was done, and on any problem, how it was resolved or what it waits on. Claude drafts it from that record and the conversation, and you review it before it is sent. The notes carry no sections, so a weekly report built from the comments can sort the work its own way.
-- **See** at a glance whether today's work is in Jira: a line above the prompt shows the linked issue, its status, and how many actions are recorded but not yet posted, with a button to draft the update.
+- **See** at a glance whether your work is in Jira: a line above the prompt shows the linked issue, its status, and how many actions are recorded but not yet posted, today's and any earlier day's, with a button to draft the update.
 - **Move** the issue along: To Do becomes In Progress when you link it, and `/jira update` suggests the next status (In Review once a pull request is up, Done once it is merged) for you to confirm with one press.
 
 Built on Claude Code's function hooks (early access); the API can change between Claude Code releases.
@@ -37,6 +37,8 @@ The token is encrypted with Windows DPAPI before it is stored, so it opens only 
 | `/jira unlink` | Removes the link |
 
 Running `/jira update` again on the same day replaces that day's comment, unless someone edited it in Jira since; then a new comment is added.
+
+A day whose work never reached Jira is not lost: the next `/jira update`, within 14 days, drafts that work into its comment along with the day's own, and posting it marks the earlier day as covered.
 
 Linking a To Do issue looks for a transition into a status named In Progress (any case); when the workflow has none, a toast says so and the issue stays where it is.
 

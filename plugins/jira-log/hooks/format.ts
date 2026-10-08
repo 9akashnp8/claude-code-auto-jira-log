@@ -18,6 +18,11 @@ export type DayActivity = {
   actions?: number
 }
 
+// An earlier day posted under a later day's comment rather than one of its own.
+export type CoveredDay = { actions: number; in: string }
+
+export type UnpostedDay = { day: string; activity: DayActivity; actions: number; unposted: number }
+
 export type RawIssue = {
   key: string
   fields: { summary: string; status: { name: string; statusCategory: { key: string } } }
@@ -38,6 +43,9 @@ export const EMPTY_ACTIVITY: DayActivity = {
   actions: 0,
 }
 
+// How far back unposted work is still offered to the draft.
+export const LOOKBACK_DAYS = 14
+
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
 
 const clockOf = (at: number) => {
@@ -46,15 +54,22 @@ const clockOf = (at: number) => {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-// What the band and status line say about today's work on the linked issue.
+// What the band and status line say about the linked issue's work that is not in Jira yet.
 export function progressOf(progress: JiraProgress | null, day: string) {
   const current = progress?.day === day ? progress : null
   const actions = current?.actions ?? 0
-  const unposted = Math.max(0, actions - (current?.postedActions ?? 0))
+  const earlier = current?.earlier ?? 0
+  const unposted = Math.max(0, actions - (current?.postedActions ?? 0)) + earlier
   if (current?.postedAt == null) {
-    return actions === 0
-      ? { tone: 'quiet', text: 'nothing recorded today', short: '' }
-      : { tone: 'due', text: `${plural(actions, 'action')} today, not in Jira yet`, short: `${actions} unposted` }
+    if (unposted === 0) return { tone: 'quiet', text: 'nothing recorded today', short: '' }
+    const text =
+      earlier === 0
+        ? `${plural(actions, 'action')} today, not in Jira yet`
+        : actions === 0
+          ? `${plural(earlier, 'action')} from earlier days, not in Jira yet`
+          : `${plural(actions, 'action')} today and ${earlier} earlier, not in Jira yet`
+
+    return { tone: 'due', text, short: `${unposted} unposted` }
   }
   if (unposted === 0) {
     return { tone: 'done', text: `✓ today's update posted ${clockOf(current.postedAt)}`, short: '✓' }
@@ -62,7 +77,7 @@ export function progressOf(progress: JiraProgress | null, day: string) {
 
   return {
     tone: 'due',
-    text: `posted ${clockOf(current.postedAt)}, ${plural(unposted, 'action')} since`,
+    text: `posted ${clockOf(current.postedAt)}, ${plural(unposted, 'action')} ${earlier === 0 ? 'since' : 'not in Jira yet'}`,
     short: `${unposted} unposted`,
   }
 }
@@ -190,6 +205,24 @@ export function dayOf(now: number) {
   const pad = (n: number) => String(n).padStart(2, '0')
 
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+export function dayBefore(day: string, count: number) {
+  const [year = 0, month = 1, date = 1] = day.split('-').map(Number)
+
+  return dayOf(new Date(year, month - 1, date - count).getTime())
+}
+
+// The earlier days within the lookback, oldest first, that the store holds activity for on this issue.
+export function earlierDaysIn(keys: readonly string[], issue: string, day: string) {
+  const prefix = `activity:${issue}:`
+  const oldest = dayBefore(day, LOOKBACK_DAYS)
+
+  return keys
+    .filter(key => key.startsWith(prefix))
+    .map(key => key.slice(prefix.length))
+    .filter(one => one >= oldest && one < day)
+    .sort()
 }
 
 export function relativeTo(root: string, path: string) {

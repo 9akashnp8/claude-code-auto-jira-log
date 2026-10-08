@@ -3,6 +3,9 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import {
   addArtifact,
+  dayBefore,
+  earlierDaysIn,
+  EMPTY_ACTIVITY,
   isReviewTool,
   newIssuePrompt,
   parseSuggestion,
@@ -348,6 +351,21 @@ test('edited paths are recorded relative to the worktree', async () => {
   expect(relativeTo('C:\\code\\repo', 'D:\\elsewhere\\b.ts')).toBe('D:/elsewhere/b.ts')
 })
 
+const PANE_PROPS = {
+  plugin: 'jira-log',
+  surface: 'terminal',
+  component: 'Pane',
+  requestId: 'jira',
+  props: {
+    title: 'Jira',
+    isFocused: true,
+    bodyColumns: 80,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 20 },
+    view: {},
+  },
+} as const
+
 const answered = (prompts: string[]) => ($: unknown, e: { prompt: string }) => {
   prompts.push(e.prompt)
   return {
@@ -358,6 +376,51 @@ const answered = (prompts: string[]) => ($: unknown, e: { prompt: string }) => {
     },
   }
 }
+
+test('work from an earlier day that never reached Jira goes into today’s update', async ($, on) => {
+  const linked = { key: 'CPC-1', summary: 'Build the thing', status: 'In Progress', statusCategory: 'indeterminate' }
+  const yesterday = {
+    ...EMPTY_ACTIVITY,
+    artifacts: [{ url: 'https://claude.ai/artifact/abc', title: 'Home Page Redesign' }],
+    actions: 3,
+  }
+  fakeJira(on, { links: { 'C:\\code\\repo': linked }, 'activity:CPC-1:2026-10-05': yesterday })
+  const prompts: string[] = []
+  on('model.fork', answered(prompts))
+  await $.session.start({ cwd: 'C:\\code\\repo', surface: 'terminal', isInteractive: true })
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const line = async () => (await band.find({ type: 'Text', text: /today|earlier|posted/ }))?.text
+
+  expect(await line()).toBe('3 actions from earlier days, not in Jira yet')
+
+  await band.press({ key: 'draft-update' })
+  const pane = await $.ui.mount(PANE_PROPS)
+  await pane.press({ key: 'post' })
+  await pane.unmount()
+
+  expect(prompts[0]).toContain('It also covers 2026-10-05, whose work never reached Jira.')
+  expect(prompts[0]).toContain('Home Page Redesign')
+  expect(await line()).toBe("✓ today's update posted 09:30")
+  await band.unmount()
+})
+
+test('an earlier day posted in full, or older than the lookback, is not offered again', async ($, on) => {
+  const linked = { key: 'CPC-1', summary: 'Build the thing', status: 'In Progress', statusCategory: 'indeterminate' }
+  const day = { ...EMPTY_ACTIVITY, actions: 2 }
+  fakeJira(on, {
+    links: { 'C:\\code\\repo': linked },
+    'activity:CPC-1:2026-10-05': day,
+    'comment:CPC-1:2026-10-05': { id: '9', updated: 'x', update: { notes: [] }, actions: 2 },
+    'activity:CPC-1:2026-10-04': day,
+    'covered:CPC-1:2026-10-04': { actions: 2, in: '2026-10-05' },
+    'activity:CPC-1:2026-09-01': day,
+  })
+  await $.session.start({ cwd: 'C:\\code\\repo', surface: 'terminal', isInteractive: true })
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+  expect((await band.find({ type: 'Text', text: /today|earlier/ }))?.text).toBe('nothing recorded today')
+  await band.unmount()
+})
 
 test('a published Artifact is recorded for the update, and reading one is not', async ($, on) => {
   const linked = { key: 'CPC-1', summary: 'Build the thing', status: 'In Progress', statusCategory: 'indeterminate' }
@@ -381,6 +444,40 @@ test('a published Artifact is recorded for the update, and reading one is not', 
 
   expect(prompts[0]).toContain(url)
   expect(prompts[0]).toContain('Home Page Redesign')
+})
+
+test('the band counts earlier unposted work alongside today’s', async () => {
+  const at = (actions: number, earlier: number, postedAt: number | null = null) => ({
+    day: '2026-10-06',
+    actions,
+    postedActions: postedAt === null ? 0 : actions,
+    postedAt,
+    earlier,
+  })
+
+  expect(progressOf(at(2, 3), '2026-10-06')).toEqual({
+    tone: 'due',
+    text: '2 actions today and 3 earlier, not in Jira yet',
+    short: '5 unposted',
+  })
+  expect(progressOf(at(2, 0), '2026-10-06').text).toBe('2 actions today, not in Jira yet')
+  expect(progressOf(at(2, 1, new Date(2026, 9, 6, 9, 30).getTime()), '2026-10-06').text).toBe(
+    'posted 09:30, 1 action not in Jira yet',
+  )
+})
+
+test('earlier days are the issue’s own, within the lookback, oldest first', async () => {
+  const keys = [
+    'activity:CPC-1:2026-10-05',
+    'activity:CPC-1:2026-09-20',
+    'activity:CPC-1:2026-10-06',
+    'activity:CPC-10:2026-10-04',
+    'comment:CPC-1:2026-10-04',
+    'activity:CPC-1:2026-09-30',
+  ]
+
+  expect(earlierDaysIn(keys, 'CPC-1', '2026-10-06')).toEqual(['2026-09-30', '2026-10-05'])
+  expect(dayBefore('2026-03-01', 1)).toBe('2026-02-28')
 })
 
 test('only a publish names an Artifact, with its title from the call or the answer', async () => {
