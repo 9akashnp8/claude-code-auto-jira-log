@@ -3,9 +3,11 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { JiraIssue, JiraTransition, JiraUpdate, JiraView } from '../types'
 import {
+  addArtifact,
   addOnce,
   COMMIT,
   dayOf,
+  earlierDaysIn,
   EMPTY_ACTIVITY,
   IN_PROGRESS,
   isReviewTool,
@@ -18,6 +20,7 @@ import {
   parseUpdate,
   POWERSHELL,
   progressOf,
+  publishedArtifactOf,
   reasonOf,
   relativeTo,
   reviewRequestOf,
@@ -33,12 +36,14 @@ import {
   UPDATE_AND_MOVE_SHAPE,
   UPDATE_RULES,
   UPDATE_SHAPE,
+  type CoveredDay,
   type DailyComment,
   type DayActivity,
   type JiraConfig,
   type RawComment,
   type RawIssue,
   type RawTransition,
+  type UnpostedDay,
 } from './format'
 
 type Engine = EngineInterface
@@ -75,7 +80,9 @@ let opened: { blob: string; token: string } | undefined
 // The store is read-modify-write, and parallel tool calls finish together.
 let recording: Promise<void> = Promise.resolve()
 // Actions recorded when the open draft was made: work done while reviewing it is not in the comment.
-let draftedActions: number | undefined
+let drafted: { actions: number | undefined; earlier: { day: string; actions: number }[] } | undefined
+// Earlier days change only when a comment is posted, so their unposted count is kept per issue and day.
+let earlierCount: { issue: string; day: string; actions: number } | undefined
 
 async function powershell($: Engine, script: string, stdin: string, what: string) {
   const { exitCode, stdout, stderr } = await $.process.run([...POWERSHELL, script], { stdin })
@@ -195,6 +202,35 @@ function record($: Engine, issue: string, day: string, change: (activity: DayAct
   return recording
 }
 
+// A comment without a count predates counting and covered its whole day.
+async function postedActionsOn($: Engine, issue: string, day: string, actions: number) {
+  const posted = (await $.store.get(commentKey(issue, day))) as DailyComment | undefined
+  const covered = (await $.store.get(coveredKey(issue, day))) as CoveredDay | undefined
+
+  return Math.max(posted === undefined ? 0 : (posted.actions ?? actions), covered?.actions ?? 0)
+}
+
+async function unpostedDays($: Engine, issue: string, day: string) {
+  const found: UnpostedDay[] = []
+  for (const earlier of earlierDaysIn(await $.store.keys(), issue, day)) {
+    const activity = await readActivity($, issue, earlier)
+    const actions = activity.actions ?? 0
+    const unposted = actions - (await postedActionsOn($, issue, earlier, actions))
+    if (unposted > 0) found.push({ day: earlier, activity, actions, unposted })
+  }
+
+  return found
+}
+
+async function earlierUnposted($: Engine, issue: string, day: string) {
+  if (earlierCount?.issue !== issue || earlierCount.day !== day) {
+    const days = await unpostedDays($, issue, day)
+    earlierCount = { issue, day, actions: days.reduce((sum, one) => sum + one.unposted, 0) }
+  }
+
+  return earlierCount.actions
+}
+
 async function refreshProgress($: Engine, issue: string) {
   const day = await today($)
   const { actions = 0 } = await readActivity($, issue, day)
@@ -204,6 +240,7 @@ async function refreshProgress($: Engine, issue: string) {
     actions,
     postedActions: posted === undefined ? 0 : (posted.actions ?? actions),
     postedAt: posted === undefined ? null : (posted.postedAt ?? (Date.parse(posted.updated) || null)),
+    earlier: await earlierUnposted($, issue, day),
   }
   await update($, progress, () => current)
   $.ui.status(`Jira ${issue}${progressOf(current, day).short ? ` · ${progressOf(current, day).short}` : ''}`)
@@ -232,6 +269,13 @@ async function recordReviewRequest($: Engine, issue: string, pullRequest: string
   return record($, issue, await today($), activity => ({
     ...activity,
     pullRequests: addOnce(activity.pullRequests, pullRequest, 20),
+  }))
+}
+
+async function recordArtifact($: Engine, issue: string, artifact: { url: string; title: string }) {
+  return record($, issue, await today($), activity => ({
+    ...activity,
+    artifacts: addArtifact(activity.artifacts, artifact),
   }))
 }
 
@@ -269,6 +313,8 @@ const loadLinks = async ($: Engine) =>
   ((await $.store.get('links')) ?? {}) as Record<string, JiraIssue>
 
 const commentKey = (issue: string, day: string) => `comment:${issue}:${day}`
+
+const coveredKey = (issue: string, day: string) => `covered:${issue}:${day}`
 
 const today = async ($: Engine) => dayOf(await $.clock.now())
 
@@ -432,17 +478,29 @@ async function ask($: Engine, prompt: string) {
   return reply.text
 }
 
-async function draftPrompt($: Engine, issue: JiraIssue, day: string, moves: readonly JiraTransition[]) {
+async function draftPrompt(
+  $: Engine,
+  issue: JiraIssue,
+  day: string,
+  moves: readonly JiraTransition[],
+  unposted: readonly UnpostedDay[],
+) {
   const activity = await readActivity($, issue.key, day)
   const posted = (await $.store.get(commentKey(issue.key, day))) as DailyComment | undefined
   const earlier = posted
     ? `Already posted today; your draft replaces it, so keep what still holds:\n${JSON.stringify(posted.update)}`
     : 'Nothing has been posted today yet.'
   const statuses = moves.map(one => `"${one.to}"`).join(', ')
+  const days = unposted.map(one => one.day)
+  const byDay = Object.fromEntries(unposted.map(one => [one.day, one.activity]))
 
   return [
-    `Draft today's progress comment for Jira issue ${issue.key} "${issue.summary}" (${day}).`,
+    `Draft today's progress comment for Jira issue ${issue.key} "${issue.summary}" (${day}).` +
+      (days.length === 0 ? '' : ` It also covers ${days.join(', ')}, whose work never reached Jira.`),
     `Work recorded on this issue today across every Claude Code session:\n${JSON.stringify(activity, null, 2)}`,
+    ...(days.length === 0
+      ? []
+      : [`Work recorded on those earlier days, by day; include it too:\n${JSON.stringify(byDay, null, 2)}`]),
     earlier,
     'Use that record and this conversation.',
     UPDATE_RULES,
@@ -464,10 +522,15 @@ async function startDraft($: Engine) {
   await update($, suggestion, () => null)
   await openPane($, 'draft')
   await attempt($, `Drafting today's update for ${issue.key}...`, async () => {
-    draftedActions = (await readActivity($, issue.key, await today($))).actions
+    const day = await today($)
+    const unposted = await unpostedDays($, issue.key, day)
+    drafted = {
+      actions: (await readActivity($, issue.key, day)).actions,
+      earlier: unposted.map(one => ({ day: one.day, actions: one.actions })),
+    }
     const current = await getIssue($, config, issue.key)
     const moves = await transitionsOf($, config, issue.key).catch(() => [])
-    const reply = await ask($, await draftPrompt($, current, await today($), moves))
+    const reply = await ask($, await draftPrompt($, current, day, moves, unposted))
     await update($, draft, () => parseUpdate(reply))
     await update($, suggestion, () => parseSuggestion(reply, moves, current.status))
   })
@@ -495,8 +558,12 @@ async function post($: Engine) {
     const key = commentKey(issue.key, day)
     const previous = (await $.store.get(key)) as DailyComment | undefined
     const saved = await saveDailyComment($, await requireConfig($), issue.key, day, current, previous)
-    const actions = draftedActions ?? (await readActivity($, issue.key, day)).actions
-    await $.store.set(key, { ...saved, actions, postedAt: await $.clock.now() })
+    const snapshot = drafted ?? { actions: (await readActivity($, issue.key, day)).actions, earlier: [] }
+    await $.store.set(key, { ...saved, actions: snapshot.actions, postedAt: await $.clock.now() })
+    for (const one of snapshot.earlier) {
+      await $.store.set(coveredKey(issue.key, one.day), { actions: one.actions, in: day } satisfies CoveredDay)
+    }
+    earlierCount = undefined
     await refreshProgress($, issue.key)
     await update($, draft, () => null)
     $.ui.toast(`${saved.id === previous?.id ? 'Updated' : 'Posted'} today's comment on ${issue.key}`)
@@ -655,6 +722,17 @@ export const register: Register = on => {
     const issue = await read($, link)
     if (issue !== null && ran.deny === undefined) {
       void recordCommand($, issue.key, e.command, ran.isError !== true, ran.text ?? '')
+    }
+
+    return ran
+  })
+
+  on('tool.call', { tool: 'Artifact' }, async ($, e, next) => {
+    const ran = await next(e)
+    const issue = await read($, link)
+    const artifact = publishedArtifactOf(e, ran.result, ran.text ?? '')
+    if (issue !== null && artifact !== undefined && ran.deny === undefined && ran.isError !== true) {
+      void recordArtifact($, issue.key, artifact)
     }
 
     return ran

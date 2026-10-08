@@ -12,9 +12,16 @@ export type DayActivity = {
   tests: { command: string; isPassing: boolean }[]
   // A pull or merge request's URL, or the command or tool that opened it when no URL was printed.
   pullRequests: string[]
+  // Published Artifacts by URL; the title is empty when no publish named one. Absent on older days.
+  artifacts?: { url: string; title: string }[]
   // Every action recorded today, counted even when the lists above dedupe or roll it off; absent on older days.
   actions?: number
 }
+
+// An earlier day posted under a later day's comment rather than one of its own.
+export type CoveredDay = { actions: number; in: string }
+
+export type UnpostedDay = { day: string; activity: DayActivity; actions: number; unposted: number }
 
 export type RawIssue = {
   key: string
@@ -27,7 +34,17 @@ export type RawTransition = { id: string; name: string; to: { name: string } }
 
 export const IN_PROGRESS = 'In Progress'
 
-export const EMPTY_ACTIVITY: DayActivity = { files: [], commits: [], tests: [], pullRequests: [], actions: 0 }
+export const EMPTY_ACTIVITY: DayActivity = {
+  files: [],
+  commits: [],
+  tests: [],
+  pullRequests: [],
+  artifacts: [],
+  actions: 0,
+}
+
+// How far back unposted work is still offered to the draft.
+export const LOOKBACK_DAYS = 14
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
 
@@ -37,15 +54,22 @@ const clockOf = (at: number) => {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-// What the band and status line say about today's work on the linked issue.
+// What the band and status line say about the linked issue's work that is not in Jira yet.
 export function progressOf(progress: JiraProgress | null, day: string) {
   const current = progress?.day === day ? progress : null
   const actions = current?.actions ?? 0
-  const unposted = Math.max(0, actions - (current?.postedActions ?? 0))
+  const earlier = current?.earlier ?? 0
+  const unposted = Math.max(0, actions - (current?.postedActions ?? 0)) + earlier
   if (current?.postedAt == null) {
-    return actions === 0
-      ? { tone: 'quiet', text: 'nothing recorded today', short: '' }
-      : { tone: 'due', text: `${plural(actions, 'action')} today, not in Jira yet`, short: `${actions} unposted` }
+    if (unposted === 0) return { tone: 'quiet', text: 'nothing recorded today', short: '' }
+    const text =
+      earlier === 0
+        ? `${plural(actions, 'action')} today, not in Jira yet`
+        : actions === 0
+          ? `${plural(earlier, 'action')} from earlier days, not in Jira yet`
+          : `${plural(actions, 'action')} today and ${earlier} earlier, not in Jira yet`
+
+    return { tone: 'due', text, short: `${unposted} unposted` }
   }
   if (unposted === 0) {
     return { tone: 'done', text: `✓ today's update posted ${clockOf(current.postedAt)}`, short: '✓' }
@@ -53,7 +77,7 @@ export function progressOf(progress: JiraProgress | null, day: string) {
 
   return {
     tone: 'due',
-    text: `posted ${clockOf(current.postedAt)}, ${plural(unposted, 'action')} since`,
+    text: `posted ${clockOf(current.postedAt)}, ${plural(unposted, 'action')} ${earlier === 0 ? 'since' : 'not in Jira yet'}`,
     short: `${unposted} unposted`,
   }
 }
@@ -65,6 +89,7 @@ const REVIEW_COMMAND = /\b(gh\s+pr\s+create|glab\s+mr\s+create|az\s+repos\s+pr\s
 const REVIEW_TOOL = /create_?(?:pull_?request|merge_?request)/i
 // GitHub /pull/7, GitLab /merge_requests/7, Azure DevOps /pullrequest/7.
 const REVIEW_URL = /https?:\/\/[^\s"'<>]+\/(?:pull|merge_requests|pullrequest)\/\d+/
+const ARTIFACT_URL = /https:\/\/claude\.ai\/(?:code\/)?artifact\/[\w-]+/
 
 // DPAPI: a sealed blob opens only for this Windows user on this machine.
 export const POWERSHELL = ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command']
@@ -131,6 +156,29 @@ export const isReviewTool = (tool: string) => tool.startsWith('mcp__') && REVIEW
 
 export const reviewUrlIn = (output: string) => output.match(REVIEW_URL)?.[0]
 
+type ArtifactCall = { action?: string; asset?: boolean; url?: string; title?: string }
+
+// A publish of a page or its files, not an asset upload. A create names its URL only in what it answered,
+// and an update names its page's title only there.
+export function publishedArtifactOf(input: ArtifactCall, result: unknown, output: string) {
+  if ((input.action ?? 'publish') !== 'publish' || input.asset === true) return undefined
+  const answered = (typeof result === 'object' && result !== null ? result : {}) as { url?: unknown; title?: unknown }
+  const url = [input.url, answered.url, output]
+    .map(one => (typeof one === 'string' ? one.match(ARTIFACT_URL)?.[0] : undefined))
+    .find(one => one !== undefined)
+  const title = [input.title, answered.title].find(one => typeof one === 'string' && one.trim() !== '')
+
+  return url === undefined ? undefined : { url, title: typeof title === 'string' ? title.trim() : '' }
+}
+
+export function addArtifact(list: DayActivity['artifacts'] = [], artifact: { url: string; title: string }) {
+  const known = list.find(one => one.url === artifact.url)
+  if (known === undefined) return [...list, artifact].slice(-50)
+  if (known.title !== '' || artifact.title === '') return list
+
+  return list.map(one => (one === known ? artifact : one))
+}
+
 export const toTransition = ({ id, name, to }: RawTransition): JiraTransition => ({ id, name, to: to.name })
 
 export const isSameStatus = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
@@ -157,6 +205,24 @@ export function dayOf(now: number) {
   const pad = (n: number) => String(n).padStart(2, '0')
 
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+export function dayBefore(day: string, count: number) {
+  const [year = 0, month = 1, date = 1] = day.split('-').map(Number)
+
+  return dayOf(new Date(year, month - 1, date - count).getTime())
+}
+
+// The earlier days within the lookback, oldest first, that the store holds activity for on this issue.
+export function earlierDaysIn(keys: readonly string[], issue: string, day: string) {
+  const prefix = `activity:${issue}:`
+  const oldest = dayBefore(day, LOOKBACK_DAYS)
+
+  return keys
+    .filter(key => key.startsWith(prefix))
+    .map(key => key.slice(prefix.length))
+    .filter(one => one >= oldest && one < day)
+    .sort()
 }
 
 export function relativeTo(root: string, path: string) {

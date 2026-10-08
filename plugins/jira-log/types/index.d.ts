@@ -15,7 +15,14 @@ export type JiraTransition = { id: string; name: string; to: string }
 
 export type JiraSuggestion = { id: string; to: string; reason: string }
 
-export type JiraProgress = { day: string; actions: number; postedActions: number; postedAt: number | null }
+// `earlier` counts unposted actions on earlier days; progress saved before it existed has none.
+export type JiraProgress = {
+  day: string
+  actions: number
+  postedActions: number
+  postedAt: number | null
+  earlier?: number
+}
 
 export type JiraView = 'setup' | 'pick' | 'draft' | 'create' | 'move'
 
