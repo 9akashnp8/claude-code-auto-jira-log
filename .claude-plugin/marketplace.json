@@ -13,7 +13,7 @@
     {
       "name": "git-push",
       "source": "./plugins/git-push",
-      "description": "Shows above the prompt when the branch has commits not on origin, with a button that pushes them."
+      "description": "Pushes the branch and opens its Azure DevOps pull request from buttons above the prompt, then shows the pull request's status there."
     }
   ]
 }
