@@ -6,7 +6,7 @@ import { failureOf, POLL_MS } from '../hooks/git'
 type Repo = { branch: string; upstream: string | null; ahead: number; pushError: string | null }
 
 // Stands in for git and the session beneath the plugin; a push publishes the branch unless pushError is set.
-function fakeGit(on: On, start: Partial<Repo> = {}) {
+function fakeGit(on: On, start: Partial<Repo> = {}, { isBeneathDrawn = true } = {}) {
   const repo: Repo = { branch: 'feature/export', upstream: 'origin/main', ahead: 2, pushError: null, ...start }
   const ran: string[] = []
   const toasts: string[] = []
@@ -32,8 +32,10 @@ function fakeGit(on: On, start: Partial<Repo> = {}) {
     toasts.push(e.text)
     return { value: undefined }
   })
-  // What the plugins beneath draw in the band, such as jira-log's line.
-  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ key: 'beneath' }))
+  // What the plugins beneath draw in the band, such as jira-log's line; else the engine's own, empty band.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) =>
+    isBeneathDrawn ? $.ui.resolve(e).Box({ key: 'beneath' }) : { type: 'engine' as const, ref: 0 },
+  )
 
   return { repo, ran, toasts, clock }
 }
@@ -61,6 +63,7 @@ test('a new branch with commits offers a push that publishes it', async ($, on) 
 
     expect((await band.find({ type: 'Text', text: /feature/ }))?.text).toBe('feature/export · not on origin yet · 2 commits')
     expect(await band.find({ key: 'beneath' })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: /^─+$/ })).toBeDefined()
     if (surface === 'desktop') {
       await band.press({ key: 'push' })
       await clock.settle()
@@ -81,6 +84,16 @@ test('the band stays out of the way while there is nothing to push', async ($, o
 
   expect(await band.find({ key: 'push' })).toBeUndefined()
   expect(await band.find({ key: 'beneath' })).toBeDefined()
+  await band.unmount()
+})
+
+test('alone in the band, the line draws no rule', async ($, on) => {
+  fakeGit(on, {}, { isBeneathDrawn: false })
+  await $.session.start({ ...SESSION, surface: 'terminal' })
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+  expect(await band.find({ key: 'push' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /^─+$/ })).toBeUndefined()
   await band.unmount()
 })
 

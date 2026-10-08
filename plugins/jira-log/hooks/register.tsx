@@ -672,13 +672,19 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
-    // The band holds one tree: stack what the plugins beneath draw (git-push's line) under ours.
-    const stacked = async (row: RenderElement) => (
-      <Box flexDirection="column">
-        {row}
-        {await next(e)}
-      </Box>
-    )
+    // The band holds one tree: stack what the plugins beneath draw (git-push's line) under ours,
+    // with a rule between. Nothing beneath leaves the engine's own band, which draws no line.
+    const stacked = async (row: RenderElement) => {
+      const below = await next(e)
+
+      return (
+        <Box flexDirection="column">
+          {row}
+          {below.type !== 'engine' && <Text dimColor wrap="truncate">{'─'.repeat(e.props.bodyColumns)}</Text>}
+          {below}
+        </Box>
+      )
+    }
     const linked = await read($, link)
     if (linked !== null) {
       if (await read($, isProgressHidden)) return next(e)

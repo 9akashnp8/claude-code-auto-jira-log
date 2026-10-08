@@ -79,8 +79,10 @@ export const register: Register = on => {
     const pushing = await read($, isPushing)
     if (pending === null && !pushing) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
-    // The band holds one tree: stack what the plugins beneath draw (jira-log's line) under ours.
+    // The band holds one tree: stack what the plugins beneath draw (jira-log's line) under ours,
+    // with a rule between. Nothing beneath leaves the engine's own band, which draws no line.
     const below = await next(e)
+    const rule = below.type !== 'engine' && <Text dimColor wrap="truncate">{'─'.repeat(e.props.bodyColumns)}</Text>
 
     return (
       <Box flexDirection="column">
@@ -92,6 +94,7 @@ export const register: Register = on => {
             <Button key="push" label="Push" variant="primary" onPress={() => void push($)} />
           )}
         </Box>
+        {rule}
         {below}
       </Box>
     )

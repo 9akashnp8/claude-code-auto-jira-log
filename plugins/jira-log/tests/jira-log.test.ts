@@ -201,6 +201,7 @@ test('the band shows whether today’s work on the linked issue is in Jira', asy
 
   expect((await band.find({ type: 'Text', text: /CPC-1/ }))?.text).toBe('CPC-1 · In Progress ·')
   expect(await band.find({ key: 'beneath' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /^─+$/ })).toBeDefined()
   expect(await line()).toBe('nothing recorded today')
   expect(await band.find({ key: 'draft-update' })).toBeUndefined()
 
