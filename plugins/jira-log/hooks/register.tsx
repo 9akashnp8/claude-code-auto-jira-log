@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { JiraIssue, JiraTransition, JiraUpdate, JiraView } from '../types'
 import {
@@ -672,12 +672,19 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
+    // The band holds one tree: stack what the plugins beneath draw (git-push's line) under ours.
+    const stacked = async (row: RenderElement) => (
+      <Box flexDirection="column">
+        {row}
+        {await next(e)}
+      </Box>
+    )
     const linked = await read($, link)
     if (linked !== null) {
       if (await read($, isProgressHidden)) return next(e)
       const { tone, text } = progressOf(await read($, progress), await today($))
 
-      return (
+      return stacked(
         <Box flexDirection="row" gap={1}>
           <Text dimColor>
             {linked.key} · {linked.status} ·
@@ -700,7 +707,7 @@ export const register: Register = on => {
     if (await read($, isSkipped)) return next(e)
     const isReady = await read($, isConfigured)
 
-    return (
+    return stacked(
       <Box flexDirection="row" gap={1}>
         <Text dimColor>{isReady ? 'Jira: no issue linked to this worktree' : 'Jira log is not set up'}</Text>
         <Button
