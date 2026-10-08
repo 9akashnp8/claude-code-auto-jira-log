@@ -44,18 +44,32 @@ Linking a To Do issue looks for a transition into a status named In Progress (an
 
 ## git-push
 
-A second plugin in this marketplace. When the branch has commits that are not on `origin`, a line above the prompt says so, with a **Push** button:
-
-- `feature/export · not on origin yet · 2 commits`: the branch was never pushed. **Push** runs `git push --set-upstream origin HEAD`, so `origin/feature/export` is created and tracked.
-- `feature/export · 1 commit not pushed`: the branch tracks `origin/feature/export` and is ahead of it.
-
-A toast says whether the push worked, or the line from git that says why not (a rejected push, a failed sign-in). The line is hidden while there is nothing to push. It checks git after each turn and every 5 seconds, so commits made with the app's Commit button or in a terminal show up too.
+A second plugin in this marketplace: push the branch and open its pull request from buttons above the prompt, then follow the pull request there until it is merged.
 
 ```
 /plugin install git-push@auto-jira-log
 ```
 
-The push runs with your own git credentials (Git Credential Manager on Windows) and never waits on a terminal prompt. Claude Code runs git for plugins with the repository's hooks off, so a `pre-push` hook does not run on this push.
+### Push
+
+When the branch has commits that are not on `origin`, the line above the prompt says so, with a **Push** button:
+
+- `feature/export · not on origin yet · 2 commits`: the branch was never pushed. **Push** runs `git push --set-upstream origin HEAD`, so `origin/feature/export` is created and tracked.
+- `feature/export · 1 commit not pushed`: the branch tracks `origin/feature/export` and is ahead of it.
+
+A toast says whether the push worked, or the line from git that says why not. The plugin checks git after each turn and every 5 seconds, so commits made with the app's Commit button or in a terminal show up too. The push runs with your own git credentials and never waits on a terminal prompt. Claude Code runs git for plugins with the repository's hooks off, so a `pre-push` hook does not run on this push.
+
+### Pull requests (Azure DevOps)
+
+When `origin` is an Azure DevOps repository (Azure DevOps Server, such as `https://server/tfs/Collection/Project/_git/Repo`, or Azure DevOps Services) and the branch is on it with nothing left to push, the line shows **Create PR**:
+
+1. Claude drafts a title and description from the conversation and the branch's commits. A Jira key named in the conversation starts the title.
+2. The draft opens in the Pull request pane: edit the title, ask for a revision in your own words, then press **Create pull request**. It targets the repository's default branch.
+3. A note in the conversation records the pull request, so Claude and `jira-log`'s next update know it is up.
+
+From then on the line follows the pull request, checking every minute: `PR #12 · Active · 1 of 2 approved · checks running`. Conflicts, a rejection or a failed check turn it red, changes requested yellow, and a merged pull request shows **Merged** in the merge purple. `PR #12` opens it in the browser. A pull request opened in the browser shows up too.
+
+Signing in needs no setup. The plugin asks git for the credential it uses for `origin` (`git credential fill`), then sends requests through Windows PowerShell: first as Basic sign-in (a personal access token), then as Windows sign-in with the same credential (a domain password), and with no stored credential as your Windows account. The credential stays in memory and goes to PowerShell on its standard input, never on a command line. Requests use REST API version 7.0, which Azure DevOps Server 2022 and later answer. Pull requests need Windows.
 
 When both plugins are installed, their lines stack in the band above the prompt.
 

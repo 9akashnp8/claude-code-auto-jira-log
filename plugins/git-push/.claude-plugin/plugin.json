@@ -1,7 +1,7 @@
 {
   "name": "git-push",
-  "version": "0.1.1",
-  "description": "Shows above the prompt when the branch has commits not on origin, with a button that pushes them.",
+  "version": "0.2.0",
+  "description": "Pushes the branch and opens its Azure DevOps pull request from buttons above the prompt, then shows the pull request's status there.",
   "author": { "name": "Akash N. Rao" },
   "types": "./types/index.d.ts"
 }
