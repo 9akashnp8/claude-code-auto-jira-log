@@ -3,7 +3,7 @@
 A Claude Code plugin that keeps Jira Cloud up to date with the work you do in Claude Code, and a second one, [git-push](#git-push), that pushes your commits from a button.
 
 - **Link** a worktree to a Jira issue: pick one of your open issues, type a key, or create a new issue drafted from the conversation.
-- **Record** the day's work on that issue as you go: files edited, commits, test runs, pull requests.
+- **Record** the day's work on that issue as you go: files edited, commits, test runs, pull requests, and Artifacts published.
 - **Post** one daily comment per issue: a few plain notes on what was done, and on any problem, how it was resolved or what it waits on. Claude drafts it from that record and the conversation, and you review it before it is sent. The notes carry no sections, so a weekly report built from the comments can sort the work its own way.
 - **See** at a glance whether today's work is in Jira: a line above the prompt shows the linked issue, its status, and how many actions are recorded but not yet posted, with a button to draft the update.
 - **Move** the issue along: To Do becomes In Progress when you link it, and `/jira update` suggests the next status (In Review once a pull request is up, Done once it is merged) for you to confirm with one press.

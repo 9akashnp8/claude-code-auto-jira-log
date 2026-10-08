@@ -2,11 +2,13 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import {
+  addArtifact,
   isReviewTool,
   newIssuePrompt,
   parseSuggestion,
   parseUpdate,
   progressOf,
+  publishedArtifactOf,
   relativeTo,
   reviewRequestOf,
   toDocument,
@@ -344,4 +346,57 @@ test('the comment is the dated line and the notes as one list, with no section h
 test('edited paths are recorded relative to the worktree', async () => {
   expect(relativeTo('C:\\code\\repo', 'c:\\code\\repo\\src\\a.ts')).toBe('src/a.ts')
   expect(relativeTo('C:\\code\\repo', 'D:\\elsewhere\\b.ts')).toBe('D:/elsewhere/b.ts')
+})
+
+const answered = (prompts: string[]) => ($: unknown, e: { prompt: string }) => {
+  prompts.push(e.prompt)
+  return {
+    value: {
+      isAnswered: true as const,
+      text: '{"notes": ["Redesigned the home page"], "move": {"to": ""}}',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    },
+  }
+}
+
+test('a published Artifact is recorded for the update, and reading one is not', async ($, on) => {
+  const linked = { key: 'CPC-1', summary: 'Build the thing', status: 'In Progress', statusCategory: 'indeterminate' }
+  const { clock } = fakeJira(on, { links: { 'C:\\code\\repo': linked } })
+  const url = 'https://claude.ai/artifact/abc'
+  const prompts: string[] = []
+  on('model.fork', answered(prompts))
+  on('tool.call', { tool: 'Artifact' }, () => ({
+    result: { url, path: 'project/canvas.json', title: 'Home Page Redesign' },
+    text: `Updated the Artifact at ${url}`,
+  }))
+  await $.session.start({ cwd: 'C:\\code\\repo', surface: 'terminal', isInteractive: true })
+
+  await $.tool.call({ tool: 'Artifact', url, file_path: 'C:\\scratch\\project\\canvas.json' })
+  await $.tool.call({ tool: 'Artifact', action: 'read', url })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.find({ type: 'Text', text: /today/ }))?.text).toBe('1 action today, not in Jira yet')
+  await band.unmount()
+  await $.command.run({ command: 'jira', args: 'update' })
+
+  expect(prompts[0]).toContain(url)
+  expect(prompts[0]).toContain('Home Page Redesign')
+})
+
+test('only a publish names an Artifact, with its title from the call or the answer', async () => {
+  const url = 'https://claude.ai/artifact/EQPnCG'
+
+  expect(publishedArtifactOf({ title: 'Home Page Redesign' }, undefined, `Created a new Artifact at ${url} (v1)`)).toEqual(
+    { url, title: 'Home Page Redesign' },
+  )
+  expect(publishedArtifactOf({ url }, { url, path: 'project/Main.dc.html', title: 'Home' }, '')).toEqual({
+    url,
+    title: 'Home',
+  })
+  expect(publishedArtifactOf({ action: 'read', url }, { url }, '')).toBeUndefined()
+  expect(publishedArtifactOf({ url, asset: true }, { url }, '')).toBeUndefined()
+
+  const named = addArtifact(addArtifact([], { url, title: '' }), { url, title: 'Home' })
+  expect(named).toEqual([{ url, title: 'Home' }])
+  expect(addArtifact(named, { url, title: '' })).toBe(named)
 })

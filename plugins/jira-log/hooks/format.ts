@@ -12,6 +12,8 @@ export type DayActivity = {
   tests: { command: string; isPassing: boolean }[]
   // A pull or merge request's URL, or the command or tool that opened it when no URL was printed.
   pullRequests: string[]
+  // Published Artifacts by URL; the title is empty when no publish named one. Absent on older days.
+  artifacts?: { url: string; title: string }[]
   // Every action recorded today, counted even when the lists above dedupe or roll it off; absent on older days.
   actions?: number
 }
@@ -27,7 +29,14 @@ export type RawTransition = { id: string; name: string; to: { name: string } }
 
 export const IN_PROGRESS = 'In Progress'
 
-export const EMPTY_ACTIVITY: DayActivity = { files: [], commits: [], tests: [], pullRequests: [], actions: 0 }
+export const EMPTY_ACTIVITY: DayActivity = {
+  files: [],
+  commits: [],
+  tests: [],
+  pullRequests: [],
+  artifacts: [],
+  actions: 0,
+}
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
 
@@ -65,6 +74,7 @@ const REVIEW_COMMAND = /\b(gh\s+pr\s+create|glab\s+mr\s+create|az\s+repos\s+pr\s
 const REVIEW_TOOL = /create_?(?:pull_?request|merge_?request)/i
 // GitHub /pull/7, GitLab /merge_requests/7, Azure DevOps /pullrequest/7.
 const REVIEW_URL = /https?:\/\/[^\s"'<>]+\/(?:pull|merge_requests|pullrequest)\/\d+/
+const ARTIFACT_URL = /https:\/\/claude\.ai\/(?:code\/)?artifact\/[\w-]+/
 
 // DPAPI: a sealed blob opens only for this Windows user on this machine.
 export const POWERSHELL = ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command']
@@ -130,6 +140,29 @@ export function reviewRequestOf(command: string, output: string) {
 export const isReviewTool = (tool: string) => tool.startsWith('mcp__') && REVIEW_TOOL.test(tool)
 
 export const reviewUrlIn = (output: string) => output.match(REVIEW_URL)?.[0]
+
+type ArtifactCall = { action?: string; asset?: boolean; url?: string; title?: string }
+
+// A publish of a page or its files, not an asset upload. A create names its URL only in what it answered,
+// and an update names its page's title only there.
+export function publishedArtifactOf(input: ArtifactCall, result: unknown, output: string) {
+  if ((input.action ?? 'publish') !== 'publish' || input.asset === true) return undefined
+  const answered = (typeof result === 'object' && result !== null ? result : {}) as { url?: unknown; title?: unknown }
+  const url = [input.url, answered.url, output]
+    .map(one => (typeof one === 'string' ? one.match(ARTIFACT_URL)?.[0] : undefined))
+    .find(one => one !== undefined)
+  const title = [input.title, answered.title].find(one => typeof one === 'string' && one.trim() !== '')
+
+  return url === undefined ? undefined : { url, title: typeof title === 'string' ? title.trim() : '' }
+}
+
+export function addArtifact(list: DayActivity['artifacts'] = [], artifact: { url: string; title: string }) {
+  const known = list.find(one => one.url === artifact.url)
+  if (known === undefined) return [...list, artifact].slice(-50)
+  if (known.title !== '' || artifact.title === '') return list
+
+  return list.map(one => (one === known ? artifact : one))
+}
 
 export const toTransition = ({ id, name, to }: RawTransition): JiraTransition => ({ id, name, to: to.name })
 

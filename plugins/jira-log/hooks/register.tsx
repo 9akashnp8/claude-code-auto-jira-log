@@ -3,6 +3,7 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { JiraIssue, JiraTransition, JiraUpdate, JiraView } from '../types'
 import {
+  addArtifact,
   addOnce,
   COMMIT,
   dayOf,
@@ -18,6 +19,7 @@ import {
   parseUpdate,
   POWERSHELL,
   progressOf,
+  publishedArtifactOf,
   reasonOf,
   relativeTo,
   reviewRequestOf,
@@ -232,6 +234,13 @@ async function recordReviewRequest($: Engine, issue: string, pullRequest: string
   return record($, issue, await today($), activity => ({
     ...activity,
     pullRequests: addOnce(activity.pullRequests, pullRequest, 20),
+  }))
+}
+
+async function recordArtifact($: Engine, issue: string, artifact: { url: string; title: string }) {
+  return record($, issue, await today($), activity => ({
+    ...activity,
+    artifacts: addArtifact(activity.artifacts, artifact),
   }))
 }
 
@@ -655,6 +664,17 @@ export const register: Register = on => {
     const issue = await read($, link)
     if (issue !== null && ran.deny === undefined) {
       void recordCommand($, issue.key, e.command, ran.isError !== true, ran.text ?? '')
+    }
+
+    return ran
+  })
+
+  on('tool.call', { tool: 'Artifact' }, async ($, e, next) => {
+    const ran = await next(e)
+    const issue = await read($, link)
+    const artifact = publishedArtifactOf(e, ran.result, ran.text ?? '')
+    if (issue !== null && artifact !== undefined && ran.deny === undefined && ran.isError !== true) {
+      void recordArtifact($, issue.key, artifact)
     }
 
     return ran
