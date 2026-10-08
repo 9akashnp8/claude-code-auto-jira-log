@@ -84,8 +84,10 @@ export function errorOf(response: AdoResponse) {
   } catch {
     // Not JSON: an HTML error page.
   }
+  // A proxy or web server's page: its text, markup dropped, says what was wrong.
+  const page = response.text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)
 
-  return `Azure DevOps answered ${response.status}`
+  return page === '' ? `Azure DevOps answered ${response.status}` : `Azure DevOps answered ${response.status}: ${page}`
 }
 
 export function jsonOf<T>(response: AdoResponse): T {
@@ -203,6 +205,7 @@ export function parseDraft(reply: string, target: string): PullRequestDraft {
 const REQUESTS = `
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+[Net.ServicePointManager]::Expect100Continue = $false
 $buffer = New-Object IO.MemoryStream
 [Console]::OpenStandardInput().CopyTo($buffer)
 $in = [Text.Encoding]::UTF8.GetString($buffer.ToArray()) | ConvertFrom-Json
