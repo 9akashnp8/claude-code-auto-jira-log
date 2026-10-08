@@ -1,12 +1,19 @@
 {
   "name": "auto-jira-log",
-  "owner": { "name": "Akash N. Rao" },
-  "description": "Claude Code plugins that log development work to Jira.",
+  "owner": {
+    "name": "Akash N. Rao"
+  },
+  "description": "Claude Code plugins that log development work to Jira and push it to origin.",
   "plugins": [
     {
       "name": "jira-log",
       "source": "./plugins/jira-log",
       "description": "Links a worktree to a Jira Cloud issue, records the work done on it, and posts a reviewed daily update comment."
+    },
+    {
+      "name": "git-push",
+      "source": "./plugins/git-push",
+      "description": "Shows above the prompt when the branch has commits not on origin, with a button that pushes them."
     }
   ]
 }

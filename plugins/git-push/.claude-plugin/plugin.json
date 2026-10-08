@@ -1,0 +1,7 @@
+{
+  "name": "git-push",
+  "version": "0.1.0",
+  "description": "Shows above the prompt when the branch has commits not on origin, with a button that pushes them.",
+  "author": { "name": "Akash N. Rao" },
+  "types": "./types/index.d.ts"
+}
