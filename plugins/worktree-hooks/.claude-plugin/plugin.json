@@ -1,7 +1,7 @@
 {
   "name": "worktree-hooks",
-  "version": "0.2.0",
-  "description": "Creates each worktree from a freshly fetched origin/<default branch> instead of a possibly stale local copy.",
+  "version": "0.4.0",
+  "description": "Starts each worktree from the latest commit of the branch it is made from: creates it from a fresh fetch, or fast-forwards a fresh desktop worktree when its session starts.",
   "author": {
     "name": "Akash N. Rao"
   }

@@ -78,13 +78,13 @@ When both plugins are installed, their lines stack in the band above the prompt.
 
 ## worktree-hooks
 
-A third plugin in this marketplace: create every worktree from a freshly fetched `origin/<default branch>`, so it never starts from a stale local copy.
+A third plugin in this marketplace: start every worktree from the latest commit of the branch it is made from, not from whatever copy of that branch this machine fetched last.
 
 ```
 /plugin install worktree-hooks@auto-jira-log
 ```
 
-It registers `WorktreeCreate`, `WorktreeRemove` and `SessionStart` command hooks. A `WorktreeCreate` hook replaces Claude Code's own worktree creation, so `worktree-create.sh` does all of it:
+It registers `WorktreeCreate`, `WorktreeRemove` and `SessionStart` command hooks. `claude --worktree` always branches from the default branch. A `WorktreeCreate` hook replaces Claude Code's own worktree creation, so `worktree-create.sh` does all of it:
 
 1. Finds the main checkout and the default branch from `origin/HEAD` (`main` when that is not set).
 2. Runs `git fetch origin <branch>`. When the fetch fails, for example offline, it carries on from the cached `origin/<branch>`.
@@ -92,17 +92,25 @@ It registers `WorktreeCreate`, `WorktreeRemove` and `SessionStart` command hooks
 
 `worktree-remove.sh` removes the worktree and deletes its `worktree-*` branch, because Claude Code never deletes the branch of a worktree a hook created.
 
+The desktop app's Code tab makes its worktrees itself and does not run `WorktreeCreate`. It branches from the branch picked in the branch selector, as this machine last fetched it, which can be behind. For those, `session-start.sh` catches up when a new session starts in a worktree:
+
+1. Finds the branch the worktree was made from. The desktop app records it as `sourceBranch` in its session file under `%APPDATA%Claudeclaude-code-sessions`. That file belongs to the app and is not documented, so when it is missing or changes shape, the hook falls back to the one branch, other than the worktree's own, that points at the worktree's commit. When several do, it cannot tell them apart and leaves the worktree alone.
+2. Fetches that branch from `origin` and fast-forwards the worktree's branch to it, then tells Claude in one line.
+
+It leaves the worktree alone when the session is resumed, cleared or compacted rather than new, when there are uncommitted changes, when the branch has commits of its own, or when the branch is not on `origin`. Set `WORKTREE_HOOKS_SYNC=0` to turn this off and only log.
+
 Things to know:
 
 - The hooks run in every repository where the plugin is enabled, and a broken script stops worktrees from being created in all of them.
 - `.worktreeinclude` is not processed when a hook creates the worktree, so files such as `.env` are not copied across.
 - Add `.claude/worktrees/` to the repository's `.gitignore`.
 - The hooks are shell-form commands, which Claude Code runs through Git Bash on Windows, so they need Git for Windows. They are not started as `bash` directly, because on Windows that name can resolve to WSL's launcher.
-- The hooks fire for `claude --worktree`, `isolation: "worktree"` subagents and background sessions. Whether the desktop app's Code tab worktrees fire them is not documented: check that a new worktree's branch is named `worktree-<name>`.
+- `WorktreeCreate` fires for `claude --worktree`, `isolation: "worktree"` subagents and background sessions, not for the desktop app's Code tab.
+- In a worktree session, `CLAUDE_PROJECT_DIR` and a hook's working directory are the main checkout. Only the `cwd` in the hook's input is the worktree.
 
 ### Debugging
 
-Every hook appends to `~/.claude/logs/worktree-hooks.log` (set `WORKTREE_HOOKS_LOG` to move it): its input, the Claude Code entry point (`CLAUDE_CODE_ENTRYPOINT`, such as `cli` or `claude-desktop`), which bash ran it, each step, and the line a failure stopped at. The `SessionStart` hook only logs: the session's branch, whether it is a linked worktree, and whether it contains `origin/<default branch>` as of the last fetch.
+Every hook appends to `~/.claude/logs/worktree-hooks.log` (set `WORKTREE_HOOKS_LOG` to move it): its input, the Claude Code entry point (`CLAUDE_CODE_ENTRYPOINT`, such as `cli` or `claude-desktop`), which bash ran it, each step, and the line a failure stopped at. `SessionStart` also logs the session's folder, branch and whether it is a linked worktree, the branch it was made from and how that was found, then either the fast-forward or the reason it skipped one (`no sync: …`).
 
 To find out whether a way of starting a session runs `WorktreeCreate`, start one and read the log:
 
@@ -122,6 +130,25 @@ To run a script by hand, pipe it the JSON Claude Code would send:
 echo '{"name":"hook-check"}' | CLAUDE_PROJECT_DIR="$PWD" bash plugins/worktree-hooks/scripts/worktree-create.sh
 ```
 
+## hook-logger
+
+A debugging plugin: it logs every hook event Claude Code fires, so you can see which events fire, when, and with what input. It changes nothing.
+
+```
+/plugin install hook-logger@auto-jira-log
+```
+
+Each event appends two lines to `~/.claude/logs/hook-events.log` (set `HOOK_LOGGER_LOG` to move it): the time, event name, Claude Code entry point (`cli` or `claude-desktop`) and project folder, then the full JSON input.
+
+It registers all 33 events in the [hooks reference](https://code.claude.com/docs/en/hooks), with no matcher, so each fires on every occurrence. Two of them cannot just log: registering `WorktreeCreate` or `WorktreeRemove` replaces Claude Code's own worktree creation or removal. So after logging, the plugin does that work itself, and adds a `result=` line saying what it did:
+
+- `WorktreeCreate` makes `.claude/worktrees/<name>` on a new branch, `worktree-<name>`, from the project's current `HEAD`, and prints its path. Claude Code's own default starts from `origin/<default branch>` instead. `.worktreeinclude` is not processed.
+- `WorktreeRemove` removes the worktree and its `worktree-*` branch.
+
+Don't enable it alongside `worktree-hooks`: both would answer `WorktreeCreate`.
+
+`FileChanged` only fires for files named in its matcher, so with none it may never fire. Every hook starts Git Bash on Windows, which adds a little time to each tool call: disable the plugin when you are done.
+
 ## Develop
 
 ```
@@ -130,4 +157,4 @@ claude plugin test plugins/jira-log
 claude --plugin-dir plugins/jira-log
 ```
 
-The same commands work for `plugins/git-push` and `plugins/worktree-hooks`.
+The same commands work for `plugins/git-push`, `plugins/worktree-hooks` and `plugins/hook-logger`.

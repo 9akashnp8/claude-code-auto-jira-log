@@ -18,7 +18,12 @@
     {
       "name": "worktree-hooks",
       "source": "./plugins/worktree-hooks",
-      "description": "Creates each worktree from a freshly fetched origin/<default branch>, and removes it and its branch afterwards."
+      "description": "Starts each worktree from the latest commit of the branch it is made from: creates it from a fresh fetch, or fast-forwards a fresh desktop worktree when its session starts."
+    },
+    {
+      "name": "hook-logger",
+      "source": "./plugins/hook-logger",
+      "description": "Logs every hook event Claude Code fires, with its full input, to a file. For finding out which events fire, and when."
     }
   ]
 }
