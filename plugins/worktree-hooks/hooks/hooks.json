@@ -1,11 +1,14 @@
 {
-  "description": "Replaces default worktree creation and removal with scripts that fetch the base branch first.",
+  "description": "Replaces default worktree creation and removal with scripts that fetch the base branch first, and logs every session start.",
   "hooks": {
     "WorktreeCreate": [
-      { "hooks": [{ "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/worktree-create.sh"] }] }
+      { "hooks": [{ "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-create.sh\"" }] }
     ],
     "WorktreeRemove": [
-      { "hooks": [{ "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/worktree-remove.sh"] }] }
+      { "hooks": [{ "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-remove.sh\"" }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\"" }] }
     ]
   }
 }
