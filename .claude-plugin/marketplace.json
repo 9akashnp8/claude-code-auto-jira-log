@@ -18,7 +18,7 @@
     {
       "name": "worktree-hooks",
       "source": "./plugins/worktree-hooks",
-      "description": "Creates each worktree from a freshly fetched origin/<default branch>, and removes it and its branch afterwards."
+      "description": "Starts each worktree from the latest origin/<default branch>: creates it from a fresh fetch, or fast-forwards a fresh desktop worktree when its session starts."
     }
   ]
 }

@@ -92,17 +92,20 @@ It registers `WorktreeCreate`, `WorktreeRemove` and `SessionStart` command hooks
 
 `worktree-remove.sh` removes the worktree and deletes its `worktree-*` branch, because Claude Code never deletes the branch of a worktree a hook created.
 
+The desktop app's Code tab makes its worktrees itself and does not run `WorktreeCreate`. It branches from `origin/<default branch>` as it was at the last fetch, which can be behind. For those, `session-start.sh` catches up when a new session starts in a worktree: it fetches the default branch and fast-forwards the worktree's branch to it. It leaves the worktree alone when the session is resumed, cleared or compacted rather than new, when there are uncommitted changes, or when the branch has commits of its own. Set `WORKTREE_HOOKS_SYNC=0` to turn this off and only log. When it moves the branch, it tells Claude in one line.
+
 Things to know:
 
 - The hooks run in every repository where the plugin is enabled, and a broken script stops worktrees from being created in all of them.
 - `.worktreeinclude` is not processed when a hook creates the worktree, so files such as `.env` are not copied across.
 - Add `.claude/worktrees/` to the repository's `.gitignore`.
 - The hooks are shell-form commands, which Claude Code runs through Git Bash on Windows, so they need Git for Windows. They are not started as `bash` directly, because on Windows that name can resolve to WSL's launcher.
-- The hooks fire for `claude --worktree`, `isolation: "worktree"` subagents and background sessions. Whether the desktop app's Code tab worktrees fire them is not documented: check that a new worktree's branch is named `worktree-<name>`.
+- `WorktreeCreate` fires for `claude --worktree`, `isolation: "worktree"` subagents and background sessions, not for the desktop app's Code tab.
+- In a worktree session, `CLAUDE_PROJECT_DIR` and a hook's working directory are the main checkout. Only the `cwd` in the hook's input is the worktree.
 
 ### Debugging
 
-Every hook appends to `~/.claude/logs/worktree-hooks.log` (set `WORKTREE_HOOKS_LOG` to move it): its input, the Claude Code entry point (`CLAUDE_CODE_ENTRYPOINT`, such as `cli` or `claude-desktop`), which bash ran it, each step, and the line a failure stopped at. The `SessionStart` hook only logs: the session's branch, whether it is a linked worktree, and whether it contains `origin/<default branch>` as of the last fetch.
+Every hook appends to `~/.claude/logs/worktree-hooks.log` (set `WORKTREE_HOOKS_LOG` to move it): its input, the Claude Code entry point (`CLAUDE_CODE_ENTRYPOINT`, such as `cli` or `claude-desktop`), which bash ran it, each step, and the line a failure stopped at. `SessionStart` also logs the session's folder, branch and whether it is a linked worktree, then either the fast-forward or the reason it skipped one (`no sync: …`).
 
 To find out whether a way of starting a session runs `WorktreeCreate`, start one and read the log:
 
