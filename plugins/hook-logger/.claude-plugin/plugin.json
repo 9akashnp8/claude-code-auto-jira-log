@@ -1,6 +1,6 @@
 {
   "name": "hook-logger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Logs every hook event Claude Code fires, with its full input, to a file. For finding out which events fire, and when.",
   "author": {
     "name": "Akash N. Rao"

@@ -1,5 +1,5 @@
 {
-  "description": "Logs every hook event Claude Code fires, with its input, to ~/.claude/logs/hook-events.log. Changes nothing.",
+  "description": "Logs every hook event Claude Code fires, with its input, to ~/.claude/logs/hook-events.log. Changes nothing, except that it creates and removes worktrees itself, as a WorktreeCreate or WorktreeRemove hook must.",
   "hooks": {
     "SessionStart": [
       {
@@ -237,6 +237,26 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/log-event.sh\" FileChanged"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-create.sh\" WorktreeCreate"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/worktree-remove.sh\" WorktreeRemove"
           }
         ]
       }
