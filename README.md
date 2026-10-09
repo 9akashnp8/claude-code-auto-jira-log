@@ -130,6 +130,20 @@ To run a script by hand, pipe it the JSON Claude Code would send:
 echo '{"name":"hook-check"}' | CLAUDE_PROJECT_DIR="$PWD" bash plugins/worktree-hooks/scripts/worktree-create.sh
 ```
 
+## hook-logger
+
+A debugging plugin: it logs every hook event Claude Code fires, so you can see which events fire, when, and with what input. It changes nothing.
+
+```
+/plugin install hook-logger@auto-jira-log
+```
+
+Each event appends two lines to `~/.claude/logs/hook-events.log` (set `HOOK_LOGGER_LOG` to move it): the time, event name, Claude Code entry point (`cli` or `claude-desktop`) and project folder, then the full JSON input.
+
+It registers 31 of the 33 events in the [hooks reference](https://code.claude.com/docs/en/hooks), with no matcher, so each fires on every occurrence. The two it leaves out, `WorktreeCreate` and `WorktreeRemove`, are not safe to log: registering either replaces Claude Code's own worktree creation or removal, so a hook that only logs would break worktrees. With `worktree-hooks` installed, its log records every `WorktreeCreate` call.
+
+`FileChanged` only fires for files named in its matcher, so with none it may never fire. Every hook starts Git Bash on Windows, which adds a little time to each tool call: disable the plugin when you are done.
+
 ## Develop
 
 ```
@@ -138,4 +152,4 @@ claude plugin test plugins/jira-log
 claude --plugin-dir plugins/jira-log
 ```
 
-The same commands work for `plugins/git-push` and `plugins/worktree-hooks`.
+The same commands work for `plugins/git-push`, `plugins/worktree-hooks` and `plugins/hook-logger`.
