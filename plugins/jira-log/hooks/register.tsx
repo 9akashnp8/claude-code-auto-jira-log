@@ -1,17 +1,21 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import type { JiraIssue, JiraTransition, JiraUpdate, JiraView } from '../types'
+import type { JiraIssue, JiraNewIssue, JiraTransition, JiraUpdate, JiraView } from '../types'
 import {
   addArtifact,
   addOnce,
+  cappedSummary,
   COMMIT,
   dayOf,
   earlierDaysIn,
+  emptyIssue,
   EMPTY_ACTIVITY,
   IN_PROGRESS,
+  isIssueReady,
   isReviewTool,
   isSameStatus,
+  ISSUE_SECTIONS,
   ISSUE_SHAPE,
   newIssuePrompt,
   OPEN,
@@ -36,6 +40,8 @@ import {
   UPDATE_AND_MOVE_SHAPE,
   UPDATE_RULES,
   UPDATE_SHAPE,
+  withListItem,
+  withoutListItem,
   type CoveredDay,
   type DailyComment,
   type DayActivity,
@@ -49,7 +55,8 @@ import {
 type Engine = EngineInterface
 
 const PANE = 'jira'
-const USAGE = 'Usage: /jira [setup | link [KEY] | new [what the ticket is for] | update | status | unlink]'
+const USAGE =
+  'Usage: /jira [setup | link [KEY] | new [--manual | what the ticket is for] | update | status | unlink]'
 
 const view = atom({ plugin: 'jira-log', key: 'view' } as const, 'setup')
 const isConfigured = atom({ plugin: 'jira-log', key: 'isConfigured' } as const, false)
@@ -594,20 +601,29 @@ async function discard($: Engine) {
   await $.ui.close({ id: PANE })
 }
 
-async function startCreate($: Engine, focus = '') {
+// With `isManual` the model is not asked: the person fills in a blank ticket in the pane.
+async function startCreate($: Engine, focus = '', isManual = false) {
   const { config, project } = await requireProject($)
   await update($, newIssue, () => null)
   await openPane($, 'create')
-  await attempt($, `Drafting a new ${project} issue...`, async () => {
+  await attempt($, isManual ? `Opening a new ${project} issue...` : `Drafting a new ${project} issue...`, async () => {
     const types = await creatableTypes($, config, project)
     await update($, issueTypes, () => types)
     const fallback = types.find(type => isSameStatus(type, 'Task')) ?? types[0] ?? 'Task'
-    const drafted = parseNewIssue(await ask($, newIssuePrompt(focus.trim())), fallback)
-    await update($, newIssue, () => drafted)
+    const started = isManual ? emptyIssue(fallback) : parseNewIssue(await ask($, newIssuePrompt(focus.trim())), fallback)
+    await update($, newIssue, () => started)
   })
 
-  return `Drafted a new ${project} issue: review it in the Jira pane.`
+  return isManual
+    ? `Opened a blank ${project} issue: write it in the Jira pane.`
+    : `Drafted a new ${project} issue: review it in the Jira pane.`
 }
+
+const editIssue = ($: Engine, change: Partial<JiraNewIssue>) =>
+  update($, newIssue, one => (one === null ? one : { ...one, ...change }))
+
+const editList = ($: Engine, field: 'scope' | 'acceptance' | 'notes', change: (list: string[]) => string[]) =>
+  update($, newIssue, one => (one === null ? one : { ...one, [field]: change(one[field]) }))
 
 async function reviseIssue($: Engine, instruction: string) {
   const current = await read($, newIssue)
@@ -626,13 +642,13 @@ async function reviseIssue($: Engine, instruction: string) {
 
 async function createIssue($: Engine) {
   const current = await read($, newIssue)
-  if (current === null) return
+  if (current === null || !isIssueReady(current)) return
   await attempt($, 'Creating the issue...', async () => {
     const { config, project } = await requireProject($)
     const created = await jira<{ key: string }>($, config, 'POST', '/rest/api/3/issue', {
       fields: {
         project: { key: project },
-        summary: current.summary,
+        summary: current.summary.trim(),
         issuetype: { name: current.issueType },
         description: toIssueDocument(current),
       },
@@ -652,7 +668,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'jira',
       description: "Link this worktree to a Jira issue and post today's update",
-      argumentHint: '[setup | link [KEY] | new [what for] | update | status | unlink]',
+      argumentHint: '[setup | link [KEY] | new [--manual | what for] | update | status | unlink]',
     })
     await refresh($)
 
@@ -676,6 +692,7 @@ export const register: Register = on => {
         case 'update':
           return { text: await startDraft($) }
         case 'new':
+          if (argument.toLowerCase() === '--manual') return { text: await startCreate($, '', true) }
           return { text: await startCreate($, e.args.trim().slice(verb.length)) }
         case 'status':
           return { text: await openMoves($) }
@@ -801,6 +818,9 @@ export const register: Register = on => {
           onPress={() => void (isReady ? openPicker($) : openPane($, 'setup'))}
         />
         {isReady && <Button key="new" label="Create new" onPress={() => void startCreate($).catch(fail($))} />}
+        {isReady && (
+          <Button key="manual" label="Write it myself" onPress={() => void startCreate($, '', true).catch(fail($))} />
+        )}
         <Button key="skip" label="Skip" onPress={() => void update($, isSkipped, () => true)} />
       </Box>
     )
@@ -913,10 +933,46 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" gap={1}>
           <Text bold>New issue</Text>
-          {drafted !== null && <Text bold>{drafted.summary}</Text>}
-          {drafted !== null && <Markdown text={toIssueMarkdown(drafted)} />}
+          {drafted !== null && working !== null && <Text bold>{drafted.summary}</Text>}
+          {drafted !== null && working !== null && <Markdown text={toIssueMarkdown(drafted)} />}
           {drafted !== null && working === null && (
             <Box flexDirection="column" gap={1}>
+              <Input
+                key="summary"
+                label="Summary "
+                placeholder="what needs doing, as a short imperative title"
+                value={drafted.summary}
+                onInput={value => void editIssue($, { summary: cappedSummary(value) })}
+              />
+              <Input
+                key="goal"
+                label="Goal    "
+                placeholder="the outcome wanted and why"
+                value={drafted.goal}
+                onInput={value => void editIssue($, { goal: value })}
+              />
+              {ISSUE_SECTIONS.map(([field, title]) => (
+                <Box key={field} flexDirection="column">
+                  <Text bold>{title}</Text>
+                  {drafted[field].map((item, index) => (
+                    <Box key={`${field}-${index}`} flexDirection="row" gap={1}>
+                      <Text>- {item}</Text>
+                      <Button
+                        key={`remove-${field}-${index}`}
+                        label="Remove"
+                        onPress={() => void editList($, field, list => withoutListItem(list, index))}
+                      />
+                    </Box>
+                  ))}
+                  <Input
+                    key={`add-${field}-${drafted[field].length}`}
+                    label="Add "
+                    placeholder={`a ${title.toLowerCase()} item, then Enter`}
+                    submitLabel="add"
+                    onSubmit={value => void editList($, field, list => withListItem(list, value))}
+                  />
+                </Box>
+              ))}
               {types.length > 0 && (
                 <Select
                   key="type"
@@ -926,15 +982,19 @@ export const register: Register = on => {
                   onSelect={type => void update($, newIssue, one => (one === null ? one : { ...one, issueType: type }))}
                 />
               )}
-              <Input
-                key="revise-issue"
-                label="Revise "
-                placeholder="e.g. make it a bug fix and mention the login page"
-                submitLabel="revise"
-                onSubmit={value => void reviseIssue($, value)}
-              />
+              {isIssueReady(drafted) && (
+                <Input
+                  key="revise-issue"
+                  label="Revise "
+                  placeholder="e.g. make it a bug fix and mention the login page"
+                  submitLabel="revise"
+                  onSubmit={value => void reviseIssue($, value)}
+                />
+              )}
               <Box flexDirection="row" gap={2}>
-                <Button key="create" label="Create and link" variant="primary" onPress={() => void createIssue($)} />
+                {isIssueReady(drafted) && (
+                  <Button key="create" label="Create and link" variant="primary" onPress={() => void createIssue($)} />
+                )}
                 <Button key="discard" label="Discard" role="dismiss" onPress={() => void discard($)} />
               </Box>
             </Box>
