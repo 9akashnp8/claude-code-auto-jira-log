@@ -3,9 +3,12 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import {
   addArtifact,
+  cappedSummary,
   dayBefore,
   earlierDaysIn,
+  emptyIssue,
   EMPTY_ACTIVITY,
+  isIssueReady,
   isReviewTool,
   newIssuePrompt,
   parseSuggestion,
@@ -17,6 +20,8 @@ import {
   toDocument,
   toIssueDocument,
   UPDATE_RULES,
+  withListItem,
+  withoutListItem,
 } from '../hooks/format'
 
 const CONFIG = { site: 'https://team.atlassian.net', email: 'me@example.com', tokenBlob: 'sealed' }
@@ -307,6 +312,94 @@ test('a drafted issue is created, assigned, linked and started', async ($, on) =
   expect(sent).toContain('PUT /rest/api/3/issue/CPC-2/assignee')
   expect(sent).toContain('POST /rest/api/3/issue/CPC-2/transitions')
   expect(toasts).toContain('Linked this worktree to CPC-2')
+})
+
+const CREATE_PANE = {
+  plugin: 'jira-log',
+  surface: 'terminal',
+  component: 'Pane',
+  requestId: 'jira',
+  props: { title: 'Jira', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 } },
+} as const
+
+test('a ticket written by hand is created without asking the model', async ($, on) => {
+  const { sent, toasts, created } = fakeJira(on, { config: { ...CONFIG, project: 'CPC' } })
+  let asked = 0
+  on('model.fork', () => {
+    asked += 1
+    return { value: { isAnswered: false, reason: 'nothing-to-fork' } }
+  })
+  on('model.complete', () => {
+    asked += 1
+    return { value: { isAnswered: false, reason: 'unavailable' } }
+  })
+
+  await $.command.run({ command: 'jira', args: 'new --manual' })
+  const pane = await $.ui.mount(CREATE_PANE)
+  // Nothing can be created, or revised by the model, until there is a summary.
+  expect(await pane.find({ key: 'create' })).toBeUndefined()
+  expect(await pane.find({ key: 'revise-issue' })).toBeUndefined()
+  expect((await pane.find({ key: 'type' }))?.props.value).toBe('Task')
+
+  await pane.input({ key: 'summary', text: '  Add CSV export  ', kind: 'change' })
+  await pane.input({ key: 'goal', text: 'Let people export the report.', kind: 'change' })
+  expect(await pane.find({ key: 'revise-issue' })).toBeDefined()
+  await pane.press({ key: 'create' })
+  await pane.unmount()
+
+  expect(asked).toBe(0)
+  expect(created[0]?.fields).toEqual({
+    project: { key: 'CPC' },
+    summary: 'Add CSV export',
+    issuetype: { name: 'Task' },
+    description: toIssueDocument({ ...emptyIssue('Task'), goal: 'Let people export the report.' }),
+  })
+  expect(sent).toContain('PUT /rest/api/3/issue/CPC-2/assignee')
+  expect(toasts).toContain('Linked this worktree to CPC-2')
+})
+
+test('a drafted ticket can be edited in the form before it is created', async ($, on) => {
+  const { created } = fakeJira(on, { config: { ...CONFIG, project: 'CPC' } })
+  on('model.fork', () => ({
+    value: {
+      isAnswered: true,
+      text: '{"summary": "Add CSV export", "goal": "", "scope": ["Write the export"], "acceptance": [], "notes": []}',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    },
+  }))
+
+  await $.command.run({ command: 'jira', args: 'new' })
+  const pane = await $.ui.mount(CREATE_PANE)
+  expect((await pane.find({ key: 'summary' }))?.props.value).toBe('Add CSV export')
+  expect(await pane.find({ key: 'remove-scope-0' })).toBeDefined()
+  await pane.input({ key: 'summary', text: 'Export the report as CSV', kind: 'change' })
+  await pane.press({ key: 'remove-scope-0' })
+  await pane.press({ key: 'create' })
+  await pane.unmount()
+
+  expect(created[0]?.fields.summary).toBe('Export the report as CSV')
+  expect(created[0]?.fields.description).toEqual(toIssueDocument(emptyIssue('Task')))
+})
+
+test('the band offers a blank ticket beside the drafted one once Jira is set up', async ($, on) => {
+  fakeJira(on, { config: { ...CONFIG, project: 'CPC' } })
+  await $.session.start({ cwd: 'C:\\code\\repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'new' }))?.props.label).toBe('Create new')
+  expect((await ui.find({ key: 'manual' }))?.props.label).toBe('Write it myself')
+  await ui.unmount()
+})
+
+test('a ticket needs only a summary, and its lists ignore blanks and repeats', async () => {
+  expect(isIssueReady(emptyIssue('Task'))).toBe(false)
+  expect(isIssueReady({ ...emptyIssue('Task'), summary: '  ' })).toBe(false)
+  expect(isIssueReady({ ...emptyIssue('Task'), summary: 'Add CSV export' })).toBe(true)
+
+  expect(withListItem(['Write it'], '  Test it ')).toEqual(['Write it', 'Test it'])
+  expect(withListItem(['Write it'], 'Write it')).toEqual(['Write it'])
+  expect(withListItem(['Write it'], '   ')).toEqual(['Write it'])
+  expect(withoutListItem(['a', 'b', 'c'], 1)).toEqual(['a', 'c'])
+  expect(cappedSummary('x'.repeat(300))).toHaveLength(255)
 })
 
 test('without a focus the ticket covers the main work of the conversation', async () => {

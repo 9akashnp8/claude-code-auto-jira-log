@@ -277,11 +277,33 @@ export function parseUpdate(reply: string): JiraUpdate {
 export const toMarkdown = (update: JiraUpdate) =>
   update.notes.map(note => `- ${note}`).join('\n') || '_Nothing to report._'
 
-const ISSUE_SECTIONS = [
+export const ISSUE_SECTIONS = [
   ['scope', 'Scope'],
   ['acceptance', 'Acceptance criteria'],
   ['notes', 'Notes'],
 ] as const
+
+const SUMMARY_LIMIT = 255
+const LIST_LIMIT = 20
+
+// A ticket the person writes themselves starts blank; only the summary is required.
+export const emptyIssue = (issueType: string): JiraNewIssue => ({
+  summary: '',
+  goal: '',
+  scope: [],
+  acceptance: [],
+  notes: [],
+  issueType,
+})
+
+export const isIssueReady = (issue: JiraNewIssue) => issue.summary.trim() !== ''
+
+export const cappedSummary = (summary: string) => summary.slice(0, SUMMARY_LIMIT)
+
+export const withListItem = (list: string[], item: string) =>
+  item.trim() === '' ? list : addOnce(list, item.trim(), LIST_LIMIT)
+
+export const withoutListItem = (list: string[], index: number) => list.filter((_, at) => at !== index)
 
 export const toIssueMarkdown = (issue: JiraNewIssue) =>
   [
