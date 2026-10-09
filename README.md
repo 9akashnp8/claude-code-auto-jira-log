@@ -78,13 +78,13 @@ When both plugins are installed, their lines stack in the band above the prompt.
 
 ## worktree-hooks
 
-A third plugin in this marketplace: create every worktree from a freshly fetched `origin/<default branch>`, so it never starts from a stale local copy.
+A third plugin in this marketplace: start every worktree from the latest commit of the branch it is made from, not from whatever copy of that branch this machine fetched last.
 
 ```
 /plugin install worktree-hooks@auto-jira-log
 ```
 
-It registers `WorktreeCreate`, `WorktreeRemove` and `SessionStart` command hooks. A `WorktreeCreate` hook replaces Claude Code's own worktree creation, so `worktree-create.sh` does all of it:
+It registers `WorktreeCreate`, `WorktreeRemove` and `SessionStart` command hooks. `claude --worktree` always branches from the default branch. A `WorktreeCreate` hook replaces Claude Code's own worktree creation, so `worktree-create.sh` does all of it:
 
 1. Finds the main checkout and the default branch from `origin/HEAD` (`main` when that is not set).
 2. Runs `git fetch origin <branch>`. When the fetch fails, for example offline, it carries on from the cached `origin/<branch>`.
@@ -92,7 +92,12 @@ It registers `WorktreeCreate`, `WorktreeRemove` and `SessionStart` command hooks
 
 `worktree-remove.sh` removes the worktree and deletes its `worktree-*` branch, because Claude Code never deletes the branch of a worktree a hook created.
 
-The desktop app's Code tab makes its worktrees itself and does not run `WorktreeCreate`. It branches from `origin/<default branch>` as it was at the last fetch, which can be behind. For those, `session-start.sh` catches up when a new session starts in a worktree: it fetches the default branch and fast-forwards the worktree's branch to it. It leaves the worktree alone when the session is resumed, cleared or compacted rather than new, when there are uncommitted changes, or when the branch has commits of its own. Set `WORKTREE_HOOKS_SYNC=0` to turn this off and only log. When it moves the branch, it tells Claude in one line.
+The desktop app's Code tab makes its worktrees itself and does not run `WorktreeCreate`. It branches from the branch picked in the branch selector, as this machine last fetched it, which can be behind. For those, `session-start.sh` catches up when a new session starts in a worktree:
+
+1. Finds the branch the worktree was made from. The desktop app records it as `sourceBranch` in its session file under `%APPDATA%Claudeclaude-code-sessions`. That file belongs to the app and is not documented, so when it is missing or changes shape, the hook falls back to the one branch, other than the worktree's own, that points at the worktree's commit. When several do, it cannot tell them apart and leaves the worktree alone.
+2. Fetches that branch from `origin` and fast-forwards the worktree's branch to it, then tells Claude in one line.
+
+It leaves the worktree alone when the session is resumed, cleared or compacted rather than new, when there are uncommitted changes, when the branch has commits of its own, or when the branch is not on `origin`. Set `WORKTREE_HOOKS_SYNC=0` to turn this off and only log.
 
 Things to know:
 
@@ -105,7 +110,7 @@ Things to know:
 
 ### Debugging
 
-Every hook appends to `~/.claude/logs/worktree-hooks.log` (set `WORKTREE_HOOKS_LOG` to move it): its input, the Claude Code entry point (`CLAUDE_CODE_ENTRYPOINT`, such as `cli` or `claude-desktop`), which bash ran it, each step, and the line a failure stopped at. `SessionStart` also logs the session's folder, branch and whether it is a linked worktree, then either the fast-forward or the reason it skipped one (`no sync: …`).
+Every hook appends to `~/.claude/logs/worktree-hooks.log` (set `WORKTREE_HOOKS_LOG` to move it): its input, the Claude Code entry point (`CLAUDE_CODE_ENTRYPOINT`, such as `cli` or `claude-desktop`), which bash ran it, each step, and the line a failure stopped at. `SessionStart` also logs the session's folder, branch and whether it is a linked worktree, the branch it was made from and how that was found, then either the fast-forward or the reason it skipped one (`no sync: …`).
 
 To find out whether a way of starting a session runs `WorktreeCreate`, start one and read the log:
 

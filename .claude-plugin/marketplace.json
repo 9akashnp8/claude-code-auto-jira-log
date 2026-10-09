@@ -18,7 +18,7 @@
     {
       "name": "worktree-hooks",
       "source": "./plugins/worktree-hooks",
-      "description": "Starts each worktree from the latest origin/<default branch>: creates it from a fresh fetch, or fast-forwards a fresh desktop worktree when its session starts."
+      "description": "Starts each worktree from the latest commit of the branch it is made from: creates it from a fresh fetch, or fast-forwards a fresh desktop worktree when its session starts."
     }
   ]
 }
