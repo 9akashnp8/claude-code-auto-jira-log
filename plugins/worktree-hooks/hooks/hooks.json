@@ -1,0 +1,11 @@
+{
+  "description": "Replaces default worktree creation and removal with scripts that fetch the base branch first.",
+  "hooks": {
+    "WorktreeCreate": [
+      { "hooks": [{ "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/worktree-create.sh"] }] }
+    ],
+    "WorktreeRemove": [
+      { "hooks": [{ "type": "command", "command": "bash", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/worktree-remove.sh"] }] }
+    ]
+  }
+}

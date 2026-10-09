@@ -1,0 +1,6 @@
+{
+  "name": "worktree-hooks",
+  "version": "0.1.0",
+  "description": "Creates each worktree from a freshly fetched origin/<default branch> instead of a possibly stale local copy.",
+  "author": { "name": "Akash N. Rao" }
+}

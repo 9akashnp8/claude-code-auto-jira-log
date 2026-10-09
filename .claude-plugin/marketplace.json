@@ -14,6 +14,11 @@
       "name": "git-push",
       "source": "./plugins/git-push",
       "description": "Pushes the branch and opens its Azure DevOps pull request from buttons above the prompt, then shows the pull request's status there."
+    },
+    {
+      "name": "worktree-hooks",
+      "source": "./plugins/worktree-hooks",
+      "description": "Creates each worktree from a freshly fetched origin/<default branch>, and removes it and its branch afterwards."
     }
   ]
 }

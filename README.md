@@ -1,6 +1,6 @@
 # claude-code-auto-jira-log
 
-A Claude Code plugin that keeps Jira Cloud up to date with the work you do in Claude Code, and a second one, [git-push](#git-push), that pushes your commits from a button.
+A Claude Code plugin that keeps Jira Cloud up to date with the work you do in Claude Code, a second one, [git-push](#git-push), that pushes your commits from a button, and a third, [worktree-hooks](#worktree-hooks), that starts each worktree from the latest remote branch.
 
 - **Link** a worktree to a Jira issue: pick one of your open issues, type a key, or create a new issue drafted from the conversation.
 - **Record** the day's work on that issue as you go: files edited, commits, test runs, pull requests, and Artifacts published.
@@ -76,6 +76,30 @@ Signing in needs no setup. The plugin asks git for the credential it uses for `o
 
 When both plugins are installed, their lines stack in the band above the prompt.
 
+## worktree-hooks
+
+A third plugin in this marketplace: create every worktree from a freshly fetched `origin/<default branch>`, so it never starts from a stale local copy.
+
+```
+/plugin install worktree-hooks@auto-jira-log
+```
+
+It registers `WorktreeCreate` and `WorktreeRemove` command hooks. A `WorktreeCreate` hook replaces Claude Code's own worktree creation, so `worktree-create.sh` does all of it:
+
+1. Finds the main checkout and the default branch from `origin/HEAD` (`main` when that is not set).
+2. Runs `git fetch origin <branch>`. When the fetch fails, for example offline, it carries on from the cached `origin/<branch>`.
+3. Runs `git worktree add` for `.claude/worktrees/<name>` on a new branch, `worktree-<name>`, from `origin/<branch>`.
+
+`worktree-remove.sh` removes the worktree and deletes its `worktree-*` branch, because Claude Code never deletes the branch of a worktree a hook created.
+
+Things to know:
+
+- The hooks run in every repository where the plugin is enabled, and a broken script stops worktrees from being created in all of them.
+- `.worktreeinclude` is not processed when a hook creates the worktree, so files such as `.env` are not copied across.
+- Add `.claude/worktrees/` to the repository's `.gitignore`.
+- The scripts run under `bash` (Git Bash on Windows). If `bash` on your PATH is WSL's, they run in the wrong environment.
+- The hooks fire for `claude --worktree`, `isolation: "worktree"` subagents and background sessions. Whether the desktop app's Code tab worktrees fire them is not documented: check that a new worktree's branch is named `worktree-<name>`.
+
 ## Develop
 
 ```
@@ -84,4 +108,4 @@ claude plugin test plugins/jira-log
 claude --plugin-dir plugins/jira-log
 ```
 
-The same commands work for `plugins/git-push`.
+The same commands work for `plugins/git-push` and `plugins/worktree-hooks`.
