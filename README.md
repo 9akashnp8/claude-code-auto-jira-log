@@ -84,7 +84,7 @@ A third plugin in this marketplace: create every worktree from a freshly fetched
 /plugin install worktree-hooks@auto-jira-log
 ```
 
-It registers `WorktreeCreate` and `WorktreeRemove` command hooks. A `WorktreeCreate` hook replaces Claude Code's own worktree creation, so `worktree-create.sh` does all of it:
+It registers `WorktreeCreate`, `WorktreeRemove` and `SessionStart` command hooks. A `WorktreeCreate` hook replaces Claude Code's own worktree creation, so `worktree-create.sh` does all of it:
 
 1. Finds the main checkout and the default branch from `origin/HEAD` (`main` when that is not set).
 2. Runs `git fetch origin <branch>`. When the fetch fails, for example offline, it carries on from the cached `origin/<branch>`.
@@ -97,8 +97,30 @@ Things to know:
 - The hooks run in every repository where the plugin is enabled, and a broken script stops worktrees from being created in all of them.
 - `.worktreeinclude` is not processed when a hook creates the worktree, so files such as `.env` are not copied across.
 - Add `.claude/worktrees/` to the repository's `.gitignore`.
-- The scripts run under `bash` (Git Bash on Windows). If `bash` on your PATH is WSL's, they run in the wrong environment.
+- The hooks are shell-form commands, which Claude Code runs through Git Bash on Windows, so they need Git for Windows. They are not started as `bash` directly, because on Windows that name can resolve to WSL's launcher.
 - The hooks fire for `claude --worktree`, `isolation: "worktree"` subagents and background sessions. Whether the desktop app's Code tab worktrees fire them is not documented: check that a new worktree's branch is named `worktree-<name>`.
+
+### Debugging
+
+Every hook appends to `~/.claude/logs/worktree-hooks.log` (set `WORKTREE_HOOKS_LOG` to move it): its input, the Claude Code entry point (`CLAUDE_CODE_ENTRYPOINT`, such as `cli` or `claude-desktop`), which bash ran it, each step, and the line a failure stopped at. The `SessionStart` hook only logs: the session's branch, whether it is a linked worktree, and whether it contains `origin/<default branch>` as of the last fetch.
+
+To find out whether a way of starting a session runs `WorktreeCreate`, start one and read the log:
+
+- A `SessionStart` entry for the new worktree with no `WorktreeCreate` entry before it: the worktree was made without the hook. Its branch is not named `worktree-<name>`.
+- No `SessionStart` entry either: the plugin's hooks did not load in that session. Check `/hooks` and the Errors tab of `/plugin`.
+- A `WorktreeCreate` entry ending in `failed:`: the hook ran and stopped at the logged line.
+
+For Claude Code's own record of a hook, run it from the terminal with a debug log, then search the file for `Hook `:
+
+```
+claude --worktree hook-check --debug-file ./claude-debug.txt
+```
+
+To run a script by hand, pipe it the JSON Claude Code would send:
+
+```
+echo '{"name":"hook-check"}' | CLAUDE_PROJECT_DIR="$PWD" bash plugins/worktree-hooks/scripts/worktree-create.sh
+```
 
 ## Develop
 
